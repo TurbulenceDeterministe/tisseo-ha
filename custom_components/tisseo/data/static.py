@@ -14,12 +14,18 @@ import sqlite3
 import unicodedata
 import zipfile
 from dataclasses import dataclass
+from math import asin, cos, radians, sin, sqrt
 from datetime import date, datetime, timedelta
 
 from .const import TZ
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
+# v4: "lean" index. Stops, routes, trips, calendars and a (stop, route) map are kept
+# for the whole network (search, nearby stops, line lists), but stop_times are only
+# kept for trips that call at one of the configured stop areas. Those trips are kept
+# whole (every call, with arrival times and board/alight flags) so journeys and the
+# trip dialog work.
 SCHEMA = """
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE stops (
@@ -33,10 +39,19 @@ CREATE TABLE trips (
   direction INTEGER, headsign TEXT);
 CREATE TABLE services (idx INTEGER PRIMARY KEY, service_id TEXT UNIQUE);
 CREATE TABLE service_dates (service_idx INTEGER, d INTEGER, PRIMARY KEY (d, service_idx)) WITHOUT ROWID;
+CREATE TABLE stop_routes (stop_idx INTEGER, route_idx INTEGER, PRIMARY KEY (stop_idx, route_idx)) WITHOUT ROWID;
 CREATE TABLE stop_times (
-  stop_idx INTEGER, dep INTEGER, trip_idx INTEGER, seq INTEGER, pickup INTEGER,
-  PRIMARY KEY (stop_idx, dep, trip_idx)) WITHOUT ROWID;
+  trip_idx INTEGER, seq INTEGER, stop_idx INTEGER, dep INTEGER, dwell INTEGER,
+  board INTEGER, alight INTEGER, PRIMARY KEY (trip_idx, seq)) WITHOUT ROWID;
 """
+POST_INDEXES = "CREATE INDEX st_stop_dep ON stop_times (stop_idx, dep);"
+
+
+def stops_key(stop_ids) -> str:
+    """Canonical key of a set of configured stops ("*" = whole network)."""
+    if stop_ids is None:
+        return "*"
+    return ",".join(sorted(set(stop_ids)))
 
 
 def normalize(text: str) -> str:
@@ -80,12 +95,19 @@ class RouteInfo:
     text_color: str
 
 
-def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
-    """(Re)build the SQLite index from a GTFS zip, atomically."""
+def build_index(zip_path: str, db_path: str, feed_version: str = "",
+                stop_ids=None) -> dict:
+    """(Re)build the SQLite index from a GTFS zip, atomically.
+
+    ``stop_ids``: configured stop ids (areas or points). Only trips calling in their
+    stop areas get stop_times. ``None`` indexes the whole network. Returns stats.
+    """
+    t0 = datetime.now()
     tmp = db_path + ".tmp"
     if os.path.exists(tmp):
         os.remove(tmp)
     con = sqlite3.connect(tmp)
+    stats = {"trips_kept": 0, "stop_times": 0}
     try:
         con.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;" + SCHEMA)
         with zipfile.ZipFile(zip_path) as zf:
@@ -99,6 +121,16 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
                              r.get("parent_station") or None))
             con.executemany("INSERT INTO stops VALUES (?,?,?,?,?,?,?,?,?)", rows)
             _stop_rows = rows
+            # area of a stop = its parent station (or itself)
+            area = {r[0]: (r[8] or r[1]) for r in _stop_rows}
+
+            keep: set[int] | None = None
+            if stop_ids is not None:
+                areas = set()
+                for sid in stop_ids:
+                    if sid in stop_idx:
+                        areas.add(area[stop_idx[sid]])
+                keep = {r[0] for r in _stop_rows if area[r[0]] in areas or r[1] in areas}
 
             route_idx: dict[str, int] = {}
             rows = []
@@ -117,13 +149,15 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
                 return service_idx[sid]
 
             trip_idx: dict[str, int] = {}
-            rows = []
+            trip_route: dict[int, int] = {}
+            trip_rows = []
             for i, r in enumerate(_rows(zf, "trips.txt")):
                 trip_idx[r["trip_id"]] = i
-                rows.append((i, r["trip_id"], route_idx.get(r["route_id"], -1),
-                             svc(r["service_id"]), int(r.get("direction_id") or 0),
-                             r.get("trip_headsign") or ""))
-            con.executemany("INSERT INTO trips VALUES (?,?,?,?,?,?)", rows)
+                trip_route[i] = route_idx.get(r["route_id"], -1)
+                trip_rows.append((i, r["trip_id"], trip_route[i],
+                                  svc(r["service_id"]), int(r.get("direction_id") or 0),
+                                  r.get("trip_headsign") or ""))
+            kept_trips: set[int] = set()
 
             # Expand calendar.txt + calendar_dates.txt into explicit (service, yyyymmdd).
             dates: set[tuple[int, int]] = set()
@@ -148,17 +182,17 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
             con.executemany("INSERT INTO services VALUES (?,?)",
                             [(v, k) for k, v in service_idx.items()])
 
-            # area of a stop = its parent station (or itself)
-            area = {r[0]: (r[8] or r[1]) for r in _stop_rows}
             batch: list[tuple] = []
-            ins = "INSERT OR IGNORE INTO stop_times VALUES (?,?,?,?,?)"
+            stop_routes: set[tuple[int, int]] = set()
+            ins = "INSERT OR IGNORE INTO stop_times VALUES (?,?,?,?,?,?,?)"
 
             def flush_trip(trip: list[tuple]) -> None:
-                """Queue one trip's boardable stops.
+                """Record one trip.
 
-                Drops pickup_type=1 rows and the trip's final stop(s) in the
-                terminus stop area: a bus arriving at its terminus (possibly via
-                two platforms of the same area) is not a departure from there."""
+                A call is boardable unless pickup_type=1 or it is one of the trip's
+                final call(s) in the terminus stop area (a bus arriving at its
+                terminus, possibly via two platforms of the same area, is not a
+                departure from there)."""
                 if not trip:
                     return
                 trip.sort(key=lambda x: x[3])
@@ -166,8 +200,22 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
                 tail = area[trip[-1][0]]
                 while end and area[trip[end - 1][0]] == tail:
                     end -= 1
-                batch.extend((st, dep, ti, seq, 0) for st, dep, ti, seq, pick in trip[:end]
-                             if not pick)
+                ti = trip[0][2]
+                rt = trip_route.get(ti, -1)
+                rows_ = []
+                touches = keep is None
+                for n, (st, dep, _ti, seq, nopick, arr, nodrop) in enumerate(trip):
+                    board = int(n < end and not nopick)
+                    if board:
+                        stop_routes.add((st, rt))
+                    if keep is not None and st in keep:
+                        touches = True
+                    # dwell (dep - arr) is almost always 0, which SQLite stores in 0 bytes
+                    rows_.append((ti, seq, st, dep, dep - arr, board, int(not nodrop)))
+                if touches:
+                    batch.extend(rows_)
+                    kept_trips.add(ti)
+                    stats["trips_kept"] += 1
 
             current: list[tuple] = []
             cur_trip = None
@@ -175,26 +223,38 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "") -> None:
                 t = r.get("departure_time") or r.get("arrival_time")
                 if not t:
                     continue
+                a = r.get("arrival_time") or t
                 if r["trip_id"] != cur_trip:  # stop_times.txt is grouped by trip
                     flush_trip(current)
                     current = []
                     cur_trip = r["trip_id"]
                 current.append((stop_idx[r["stop_id"]], _secs(t), trip_idx[r["trip_id"]],
-                                int(r["stop_sequence"]), r.get("pickup_type") == "1"))
+                                int(r["stop_sequence"]), r.get("pickup_type") == "1",
+                                _secs(a), r.get("drop_off_type") == "1"))
                 if len(batch) >= 50000:
+                    stats["stop_times"] += len(batch)
                     con.executemany(ins, batch)
                     batch.clear()
             flush_trip(current)
+            stats["stop_times"] += len(batch)
             con.executemany(ins, batch)
+            con.executemany("INSERT INTO stop_routes VALUES (?,?)", sorted(stop_routes))
+            # lean index: only the trips that have stop_times
+            con.executemany("INSERT INTO trips VALUES (?,?,?,?,?,?)",
+                            [r for r in trip_rows if r[0] in kept_trips])
+            con.executescript(POST_INDEXES)
 
         con.executemany("INSERT INTO meta VALUES (?,?)", [
             ("schema", str(SCHEMA_VERSION)), ("feed_version", feed_version),
-            ("built", datetime.now(TZ).isoformat())])
+            ("built", datetime.now(TZ).isoformat()), ("stops_key", stops_key(stop_ids))])
         con.commit()
         con.execute("VACUUM")
     finally:
         con.close()
     os.replace(tmp, db_path)
+    stats["seconds"] = round((datetime.now() - t0).total_seconds(), 2)
+    stats["bytes"] = os.path.getsize(db_path)
+    return stats
 
 
 class GtfsStore:
@@ -266,9 +326,8 @@ class GtfsStore:
         ids = self.child_stop_ids(stop_ids[0]) if len(stop_ids) == 1 else stop_ids
         ph = ",".join("?" * len(ids))
         rows = con.execute(
-            f"SELECT DISTINCT r.* FROM stops s JOIN stop_times st ON st.stop_idx=s.idx "
-            f"JOIN trips t ON t.idx=st.trip_idx JOIN routes r ON r.idx=t.route_idx "
-            f"WHERE s.stop_id IN ({ph})", ids).fetchall()
+            f"SELECT DISTINCT r.* FROM stops s JOIN stop_routes sr ON sr.stop_idx=s.idx "
+            f"JOIN routes r ON r.idx=sr.route_idx WHERE s.stop_id IN ({ph})", ids).fetchall()
         routes = [RouteInfo(r["route_id"], r["short_name"], r["long_name"], r["type"],
                             r["color"], r["text_color"]) for r in rows]
         return sorted(routes, key=lambda x: (x.type != 1, x.type, len(x.short_name), x.short_name))
@@ -304,6 +363,117 @@ class GtfsStore:
             "JOIN trips t ON t.idx=st.trip_idx "
             "JOIN service_dates sd ON sd.service_idx=t.service_idx AND sd.d=? "
             "JOIN routes r ON r.idx=t.route_idx "
-            f"WHERE s.stop_id IN ({ph}) AND st.dep BETWEEN ? AND ? ORDER BY st.dep")
+            f"WHERE s.stop_id IN ({ph}) AND st.board=1 AND st.dep BETWEEN ? AND ? ORDER BY st.dep")
         with self._con() as con:
             return [dict(r) for r in con.execute(sql, (d, *stop_ids, from_secs, to_secs))]
+
+    def stops_key(self) -> str:
+        try:
+            return self.meta().get("stops_key", "")
+        except sqlite3.Error:
+            return ""
+
+    def area_of(self, stop_id: str) -> str:
+        st = self.get_stop(stop_id)
+        return (st.parent or st.stop_id) if st else stop_id
+
+    # ---- nearby ---------------------------------------------------------------
+    def nearby_stops(self, lat: float, lon: float, limit: int = 10,
+                     max_km: float = 5.0) -> list[tuple[StopInfo, float, list[str]]]:
+        """Stop areas closest to (lat, lon): (stop, distance in metres, line names)."""
+        with self._con() as con:
+            d_lat = max_km / 111.0
+            d_lon = max_km / (111.0 * max(0.1, cos(radians(lat))))
+            rows = con.execute(
+                "SELECT * FROM stops WHERE location_type=1 AND lat BETWEEN ? AND ? "
+                "AND lon BETWEEN ? AND ?", (lat - d_lat, lat + d_lat, lon - d_lon, lon + d_lon)
+            ).fetchall()
+            found = sorted(((haversine_m(lat, lon, r["lat"], r["lon"]), self._stop(r)) for r in rows),
+                           key=lambda x: x[0])
+            out = []
+            for dist, st in found:
+                lines = [x.short_name for x in self._routes_for(con, [st.stop_id])]
+                if lines:  # skip areas no line serves any more
+                    out.append((st, dist, lines))
+                if len(out) >= limit:
+                    break
+            return out
+
+    # ---- trips ----------------------------------------------------------------
+    def trip_calls(self, trip_id: str) -> list[dict]:
+        """Every call of an indexed trip (empty if the trip is not in the lean index)."""
+        sql = ("SELECT st.seq, s.stop_id, s.name, s.parent, s.lat, s.lon, st.dep - st.dwell AS arr, st.dep, "
+               "st.board, st.alight, t.headsign, r.route_id FROM trips t "
+               "JOIN stop_times st ON st.trip_idx=t.idx JOIN stops s ON s.idx=st.stop_idx "
+               "JOIN routes r ON r.idx=t.route_idx WHERE t.trip_id=? ORDER BY st.seq")
+        with self._con() as con:
+            return [dict(r) for r in con.execute(sql, (trip_id,))]
+
+    def trip_info(self, trip_id: str) -> dict | None:
+        with self._con() as con:
+            r = con.execute("SELECT t.trip_id, t.headsign, t.direction, r.route_id FROM trips t "
+                            "JOIN routes r ON r.idx=t.route_idx WHERE t.trip_id=?",
+                            (trip_id,)).fetchone()
+            return dict(r) if r else None
+
+    # ---- service summaries (timetable change detection) ---------------------
+    def day_summary(self, stop_ids: list[str], day: date,
+                    route_ids: set[str] | None = None) -> dict:
+        """Departures of one service day at the stops: count, first/last, per line."""
+        ph = ",".join("?" * len(stop_ids))
+        d = int(day.strftime("%Y%m%d"))
+        sql = ("SELECT r.route_id, r.short_name, st.dep, sv.service_id FROM stops s "
+               "JOIN stop_times st ON st.stop_idx=s.idx JOIN trips t ON t.idx=st.trip_idx "
+               "JOIN service_dates sd ON sd.service_idx=t.service_idx AND sd.d=? "
+               "JOIN services sv ON sv.idx=t.service_idx JOIN routes r ON r.idx=t.route_idx "
+               f"WHERE s.stop_id IN ({ph}) AND st.board=1")
+        with self._con() as con:
+            rows = [r for r in con.execute(sql, (d, *stop_ids))
+                    if not route_ids or r["route_id"] in route_ids]
+        per_line: dict[str, int] = {}
+        for r in rows:
+            per_line[r["short_name"]] = per_line.get(r["short_name"], 0) + 1
+        deps = sorted(r["dep"] for r in rows)
+        return {"date": day.isoformat(), "count": len(rows), "per_line": per_line,
+                "first": deps[0] if deps else None, "last": deps[-1] if deps else None,
+                "services": sorted({r["service_id"] for r in rows})}
+
+    def active_services(self, day: date) -> int:
+        """Number of service ids running on ``day`` (whole network)."""
+        with self._con() as con:
+            return con.execute("SELECT count(*) FROM service_dates WHERE d=?",
+                               (int(day.strftime("%Y%m%d")),)).fetchone()[0]
+
+    def coverage_end(self, ratio: float = 0.3) -> date | None:
+        """Last day whose number of running services is still >= ratio * median.
+
+        GTFS feeds often trail off (a few services published weeks ahead); days after
+        this are treated as "not published yet" rather than "no service"."""
+        with self._con() as con:
+            rows = con.execute("SELECT d, count(*) FROM service_dates GROUP BY d ORDER BY d").fetchall()
+        if not rows:
+            return None
+        counts = sorted(c for _, c in rows)
+        median = counts[len(counts) // 2]
+        good = [d for d, c in rows if c >= ratio * median]
+        return datetime.strptime(str(good[-1]), "%Y%m%d").date() if good else None
+
+    def feed_dates(self) -> tuple[int, int] | None:
+        with self._con() as con:
+            r = con.execute("SELECT min(d), max(d) FROM service_dates").fetchone()
+            return (r[0], r[1]) if r and r[0] else None
+
+    def trip_runs_on(self, trip_id: str, day: date) -> bool:
+        with self._con() as con:
+            return con.execute(
+                "SELECT 1 FROM trips t JOIN service_dates sd ON sd.service_idx=t.service_idx "
+                "WHERE t.trip_id=? AND sd.d=?",
+                (trip_id, int(day.strftime("%Y%m%d")))).fetchone() is not None
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p1, p2 = radians(lat1), radians(lat2)
+    dp, dl = p2 - p1, radians(lon2 - lon1)
+    a = sin(dp / 2) ** 2 + cos(p1) * cos(p2) * sin(dl / 2) ** 2
+    return 2 * 6371000 * asin(sqrt(a))
+

@@ -10,8 +10,9 @@ from datetime import datetime, timedelta
 import aiohttp
 
 from .const import GTFS_RT_URLS, GTFS_URLS, TZ, USER_AGENT
+from .health import FeedHealth, backoff_delay
 from .realtime import RealtimeSnapshot, parse_realtime
-from .static import GtfsStore, build_index
+from .static import GtfsStore, build_index, stops_key
 
 _LOGGER = logging.getLogger(__name__)
 HEADERS = {"User-Agent": USER_AGENT}
@@ -37,6 +38,41 @@ class TisseoFeeds:
         self.rt_error: str | None = None
         self.rt_source_url: str | None = None
         self._alerts_at: datetime | None = None
+        self.health: dict[str, FeedHealth] = {
+            "gtfs_rt": FeedHealth("gtfs_rt"), "gtfs": FeedHealth("gtfs", stale_after=7 * 86400),
+        }
+        self.rt_attempts = 4
+        self.sleep = asyncio.sleep
+        # stop ids the lean index must cover (None = whole network)
+        self.required_stops: set[str] | None = set()
+        self.index_stats: dict | None = None
+
+    # ---------------- lean index ----------------
+    async def ensure_index(self, stop_ids: set[str] | None = None) -> bool:
+        """Rebuild the index from the cached zip when the configured stops changed."""
+        if stop_ids is not None:
+            self.required_stops = set(stop_ids)
+        async with self._gtfs_lock:
+            if not await self._exec(os.path.exists, self.zip_path):
+                return False
+            want = stops_key(self.required_stops)
+            have = await self._exec(self.store.stops_key) if await self._exec(self.store.is_valid) else None
+            if have == want:
+                return False
+            await self._build(self._read_meta_sync_version())
+            return True
+
+    def _read_meta_sync_version(self) -> str:
+        m = self._read_meta()
+        return m.get("etag") or m.get("last_modified") or m.get("checked") or ""
+
+    async def _build(self, version: str) -> None:
+        _LOGGER.info("Indexing Tisséo GTFS for %s stop(s)",
+                     "all" if self.required_stops is None else len(self.required_stops))
+        stops = None if self.required_stops is None else sorted(self.required_stops)
+        self.index_stats = await self._exec(build_index, self.zip_path, self.db_path, version, stops)
+        from .departures import clear_caches
+        clear_caches()
 
     # ---------------- static ----------------
     def _read_meta(self) -> dict:
@@ -56,6 +92,10 @@ class TisseoFeeds:
             await self._exec(lambda: os.makedirs(self.cache_dir, exist_ok=True))
             meta = await self._exec(self._read_meta)
             valid = await self._exec(self.store.is_valid)
+            if valid and await self._exec(self.store.stops_key) != stops_key(self.required_stops):
+                valid = False if not await self._exec(os.path.exists, self.zip_path) else valid
+                if valid:
+                    await self._build(meta.get("etag") or meta.get("last_modified") or "")
             checked = meta.get("checked")
             if valid and not force and checked and \
                     datetime.now(TZ) - datetime.fromisoformat(checked) < max_age:
@@ -71,6 +111,7 @@ class TisseoFeeds:
                     async with self.session.get(url, headers=headers,
                                                 timeout=aiohttp.ClientTimeout(total=300)) as resp:
                         if resp.status == 304:
+                            self.health["gtfs"].record(True)
                             meta["checked"] = datetime.now(TZ).isoformat()
                             await self._exec(self._write_meta, meta)
                             return False
@@ -96,14 +137,13 @@ class TisseoFeeds:
                             "checked": datetime.now(TZ).isoformat(),
                         }
                     version = new_meta["etag"] or new_meta["last_modified"] or new_meta["checked"]
-                    _LOGGER.info("Indexing Tisséo GTFS from %s", url)
-                    await self._exec(build_index, self.zip_path, self.db_path, version)
+                    await self._build(version)
                     await self._exec(self._write_meta, new_meta)
-                    from .departures import clear_caches
-                    clear_caches()
+                    self.health["gtfs"].record(True)
                     return True
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
                     last_err = err
+                    self.health["gtfs"].record(False, f"{type(err).__name__}")
                     _LOGGER.warning("GTFS download from %s failed: %s", url, err)
             if valid:
                 return False  # keep using the cached index
@@ -116,12 +156,19 @@ class TisseoFeeds:
             now = datetime.now(TZ)
             if self._rt_fetched and (now - self._rt_fetched).total_seconds() < self.rt_min_interval:
                 return self._rt
-            for attempt, url in enumerate(GTFS_RT_URLS * 2):
+            hl = self.health["gtfs_rt"]
+            if not hl.allow():
+                self.rt_error = "circuit breaker open"
+                attempts = []
+            else:
+                attempts = [GTFS_RT_URLS[i % len(GTFS_RT_URLS)] for i in range(self.rt_attempts)]
+            for attempt, url in enumerate(attempts):
                 if attempt:
-                    await asyncio.sleep(2)  # api.tisseo.fr intermittently drops TLS handshakes
+                    # api.tisseo.fr intermittently drops TLS handshakes: jittered backoff
+                    await self.sleep(backoff_delay(attempt - 1))
                 try:
                     async with self.session.get(url, headers=HEADERS,
-                                                timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                                                timeout=aiohttp.ClientTimeout(total=15)) as resp:
                         resp.raise_for_status()
                         data = await resp.read()
                     snap = await self._exec(parse_realtime, data)
@@ -136,11 +183,21 @@ class TisseoFeeds:
                     self._rt_fetched = now
                     self.rt_source_url = url
                     self.rt_error = None
+                    hl.record(True)
                     return self._rt
                 except Exception as err:  # noqa: BLE001 - feed errors must not kill updates
-                    self.rt_error = f"{url}: {err}"
+                    self.rt_error = f"{url}: {type(err).__name__}: {err}"
+                    hl.record(False, f"{type(err).__name__}")
                     _LOGGER.debug("GTFS-RT fetch failed: %s", self.rt_error)
+                    if not hl.allow():
+                        break
             # keep a stale snapshot for up to 5 minutes, then fall back to schedule only
             if self._rt_fetched and (now - self._rt_fetched).total_seconds() > 300:
                 self._rt = None
             return self._rt
+
+    def feed_age(self) -> float | None:
+        """Seconds since the GTFS-RT header timestamp of the current snapshot."""
+        if self._rt is None or not self._rt.timestamp:
+            return None
+        return max(0.0, datetime.now(TZ).timestamp() - self._rt.timestamp)
