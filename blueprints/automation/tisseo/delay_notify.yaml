@@ -1,0 +1,60 @@
+blueprint:
+  name: Tisséo – notify on delay
+  description: >
+    Runs your actions when a departure at a configured stop is late by at least the
+    integration's *delay threshold* option (event `tisseo_delay`, fired once per trip).
+    Only real-time departures can be late: the metro has no live data in Tisséo's open feed.
+    Variables: `{{ line }}`, `{{ destination }}`, `{{ delay_minutes }}`, `{{ expected }}`, `{{ stop_name }}`.
+  domain: automation
+  source_url: https://github.com/your-github-user/tisseo-ha/blob/main/blueprints/automation/tisseo/delay_notify.yaml
+  input:
+    stop_name:
+      name: Stop name filter (optional)
+      default: ""
+      selector:
+        text:
+    lines:
+      name: Lines (optional)
+      default: []
+      selector:
+        text:
+          multiple: true
+    min_delay:
+      name: Minimum delay
+      description: Extra filter on top of the integration's threshold.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: min
+    actions:
+      name: Actions
+      default:
+        - action: persistent_notification.create
+          data:
+            title: "Tisséo – {{ line }} late"
+            message: "{{ line }} → {{ destination }} at {{ stop_name }}: +{{ delay_minutes }} min (expected {{ as_timestamp(expected) | timestamp_custom('%H:%M') }})"
+      selector:
+        action:
+mode: queued
+max: 10
+triggers:
+  - trigger: event
+    event_type: tisseo_delay
+variables:
+  stop_filter: !input stop_name
+  line_filter: !input lines
+  min_delay: !input min_delay
+  stop_name: "{{ trigger.event.data.stop_name }}"
+  line: "{{ trigger.event.data.line }}"
+  destination: "{{ trigger.event.data.destination }}"
+  delay_minutes: "{{ trigger.event.data.delay_minutes }}"
+  expected: "{{ trigger.event.data.expected }}"
+conditions:
+  - condition: template
+    value_template: >
+      {{ (stop_filter | length == 0 or stop_filter == stop_name)
+         and (line_filter | length == 0 or line in line_filter)
+         and (delay_minutes | float(0)) >= (min_delay | float(0)) }}
+actions: !input actions

@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Please never paste your Tisséo API key. Diagnostics downloaded from Home Assistant already redact it."
+  - type: input
+    id: version
+    attributes:
+      label: "Integration version"
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: "Home Assistant version"
+      placeholder: "2026.10.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: entry
+    attributes:
+      label: Entry type
+      options: [Stop, Journey, VélôToulouse station, Park-and-ride, Dashboard card]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: "What happened and what did you expect?"
+    validations:
+      required: true
+  - type: textarea
+    id: diag
+    attributes:
+      label: Diagnostics / logs
+      description: "Settings → Devices & services → Tisséo → ⋮ → Download diagnostics, and logs with `custom_components.tisseo: debug`."
+      render: text

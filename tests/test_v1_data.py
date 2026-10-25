@@ -249,3 +249,12 @@ def test_parkride_parse():
                                      "commune": "TOULOUSE",
                                      "geo_point_2d": {"lat": 43.59, "lon": 1.41}}]})
     assert p["31555-P-0024"].capacity == 522 and p["31555-P-0024"].name == "Arenes"
+
+
+def test_gbfs_skips_unnamed_placeholder_stations():
+    from custom_components.tisseo.data.bikes import parse_information
+    info = parse_information({"data": {"stations": [
+        {"station_id": "303", "name": [{"text": "", "language": "fr"}], "lat": 43.6, "lon": 1.44, "capacity": 0},
+        {"station_id": "1", "name": [{"text": "", "language": "fr"}, {"text": "POIDS DE L'HUILE", "language": "en"}],
+         "lat": 43.6, "lon": 1.44, "capacity": 19}]}})
+    assert list(info) == ["1"] and info["1"].name == "POIDS DE L'HUILE"

@@ -274,7 +274,9 @@ class TisseoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             health.record(False, "setup")
             return self.async_abort(reason="cannot_connect_gbfs")
         health.record(True)
-        near = nearest(stations, self.hass.config.latitude, self.hass.config.longitude, 15)
+        usable = {k: v for k, v in stations.items()
+                  if not (k in status and not status[k].installed)}
+        near = nearest(usable, self.hass.config.latitude, self.hass.config.longitude, 15)
         self._choices = {}
         for dist, s in near:
             st = status.get(s.station_id)

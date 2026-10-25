@@ -48,7 +48,7 @@ class BikeStatus:
 def _text(v) -> str:
     if isinstance(v, list):
         for item in v:
-            if isinstance(item, dict) and item.get("text"):
+            if isinstance(item, dict) and str(item.get("text") or "").strip():
                 return str(item["text"])
         return ""
     return str(v or "")
@@ -70,7 +70,10 @@ def parse_information(payload: dict) -> dict[str, BikeStation]:
     out = {}
     for s in (payload.get("data") or {}).get("stations", []):
         sid = str(s.get("station_id"))
-        out[sid] = BikeStation(sid, _text(s.get("name")), float(s.get("lat") or 0),
+        name = _text(s.get("name")).strip()
+        if not name:
+            continue  # the Toulouse feed lists ~11 unnamed placeholder stations (capacity 0)
+        out[sid] = BikeStation(sid, name, float(s.get("lat") or 0),
                                float(s.get("lon") or 0), _text(s.get("address")),
                                s.get("capacity"))
     return out

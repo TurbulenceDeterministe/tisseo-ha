@@ -1,0 +1,4 @@
+# Single source of truth for the GitHub location. Edit, then run:
+#   python scripts/set_github_user.py
+github_user=your-github-user
+repo_name=tisseo-ha

@@ -1,0 +1,60 @@
+blueprint:
+  name: Tisséo – notify on new disruption
+  description: >
+    Runs your actions when the Tisséo integration announces a **new** disruption
+    (event `tisseo_disruption`) for a configured stop. Existing alerts are not replayed
+    at Home Assistant start. Use `{{ header }}`, `{{ description }}`, `{{ lines }}`,
+    `{{ stop_name }}` and `{{ url }}` in your actions.
+  domain: automation
+  source_url: https://github.com/your-github-user/tisseo-ha/blob/main/blueprints/automation/tisseo/disruption_notify.yaml
+  input:
+    stop_name:
+      name: Stop name filter (optional)
+      description: Only for this stop (exact name as shown by the integration). Empty = all stops.
+      default: ""
+      selector:
+        text:
+    lines:
+      name: Lines (optional)
+      description: Only alerts that concern one of these line short names (e.g. A, B, T1, L9). Empty = all.
+      default: []
+      selector:
+        text:
+          multiple: true
+    include_network:
+      name: Include network-wide alerts
+      default: true
+      selector:
+        boolean:
+    actions:
+      name: Actions
+      description: What to do, e.g. a notify action.
+      default:
+        - action: persistent_notification.create
+          data:
+            title: "Tisséo – {{ stop_name }}"
+            message: "{{ header }}{% if lines %} ({{ lines | join(', ') }}){% endif %}"
+      selector:
+        action:
+mode: queued
+max: 10
+triggers:
+  - trigger: event
+    event_type: tisseo_disruption
+variables:
+  stop_filter: !input stop_name
+  line_filter: !input lines
+  include_network: !input include_network
+  stop_name: "{{ trigger.event.data.stop_name }}"
+  header: "{{ trigger.event.data.header }}"
+  description: "{{ trigger.event.data.description }}"
+  url: "{{ trigger.event.data.url }}"
+  lines: "{{ trigger.event.data.lines }}"
+conditions:
+  - condition: template
+    value_template: >
+      {{ (stop_filter | length == 0 or stop_filter == stop_name)
+         and (include_network or not trigger.event.data.network_wide)
+         and (line_filter | length == 0 or trigger.event.data.network_wide
+              or (lines | select('in', line_filter) | list | length > 0)) }}
+actions: !input actions

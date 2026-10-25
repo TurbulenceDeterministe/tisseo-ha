@@ -38,8 +38,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
         entities += [BikeSensor(coordinator, entry, "bikes"), BikeSensor(coordinator, entry, "docks")]
     elif t == TYPE_PARKRIDE:
         entities.append(ParkRideSensor(coordinator, entry))
-    entities += [HealthSensor(coordinator, entry, k) for k in ("health", "last_success",
-                                                               "success_rate", "feed_age")]
+    kinds = ["health", "last_success", "success_rate"]
+    if t != TYPE_PARKRIDE:  # P+R data is static capacity: no feed timestamp to age
+        kinds.append("feed_age")
+    entities += [HealthSensor(coordinator, entry, k) for k in kinds]
     async_add_entities(entities)
 
 
