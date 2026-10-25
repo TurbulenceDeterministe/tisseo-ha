@@ -29,3 +29,15 @@ def test_card_has_no_secrets():
     src = CARD.read_text(encoding="utf-8").lower()
     for word in ("apikey", "api_key", "token", "bearer", "authorization"):
         assert word not in src
+
+
+def test_card_v1_features_are_wired():
+    src = CARD.read_text(encoding="utf-8")
+    for layout in ("compact", "board"):
+        assert f"ha-card.{layout}" in src
+    # row tap -> websocket command that the integration registers
+    assert '"tisseo/trip_stops"' in src
+    assert '"tisseo/trip_stops"' in (COMP / "services.py").read_text(encoding="utf-8")
+    for opt in ("filter_lines", "filter_destinations", "show_filters", "trip_dialog", "layout"):
+        assert f'name: "{opt}"' in src, opt
+    assert "localStorage" in src  # in-card filter selection persists per card
