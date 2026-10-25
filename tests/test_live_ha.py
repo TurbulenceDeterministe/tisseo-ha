@@ -38,6 +38,8 @@ async def test_live_stop(hass, socket_enabled, query, stop_id):
         run_in_executor=hass.async_add_executor_job)
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "stop_search"})
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"query": query})
     assert result["step_id"] == "stop"
     result = await hass.config_entries.flow.async_configure(
