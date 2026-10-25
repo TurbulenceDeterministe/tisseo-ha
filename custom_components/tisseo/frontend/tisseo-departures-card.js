@@ -38,6 +38,7 @@ const TDC_CSS = `
   --tdc-early: var(--success-color, #43a047); --tdc-muted: var(--secondary-text-color, #727272);
   --tdc-divider: var(--divider-color, rgba(127,127,127,.2)); display:block; }
 ha-card { overflow: hidden; position: relative; }
+[hidden] { display: none !important; }
 .header { display:flex; align-items:center; gap:12px; padding:16px 16px 8px; }
 .header .icon { width:40px; height:40px; border-radius:12px; display:grid; place-items:center;
   background: color-mix(in srgb, var(--tdc-accent) 15%, transparent); color: var(--tdc-accent); flex:none; }
@@ -139,10 +140,10 @@ ha-card.board { background: #0b0f14; color: #ffd24a; --primary-text-color: #ffd2
   --tdc-divider: rgba(255,210,74,.18); font-family: "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace; }
 ha-card.board .header .icon { background: rgba(255,210,74,.14); color:#ffd24a; }
 ha-card.board .header .title { color:#ffd24a; text-transform: uppercase; letter-spacing:.06em; }
-ha-card.board .bhead { display:grid; grid-template-columns: 3.4em 1fr 5em 6.5em; gap:10px; padding: 4px 18px;
+ha-card.board .bhead { display:grid; grid-template-columns: 3.4em 1fr 4.2em 5.4em; gap:10px; padding: 4px 18px;
   font-size:.7em; text-transform: uppercase; letter-spacing:.12em; color:#b8a35a; border-bottom:1px solid rgba(255,210,74,.18); }
 ha-card.board .list { padding: 2px 8px 8px; }
-ha-card.board .row { grid-template-columns: 3.4em 1fr 5em 6.5em; border-radius:0; margin:0; padding:9px 10px;
+ha-card.board .row { grid-template-columns: 3.4em 1fr 4.2em 5.4em; border-radius:0; margin:0; padding:9px 10px;
   background: none; border-bottom:1px dashed rgba(255,210,74,.14); }
 ha-card.board .row:nth-child(even) { background: rgba(255,255,255,.025); }
 ha-card.board .row::before { display:none; }
@@ -150,7 +151,7 @@ ha-card.board .badge { box-shadow:none; }
 ha-card.board .dest { color:#ffd24a; text-transform: uppercase; letter-spacing:.04em; }
 ha-card.board .mid .meta { display:none; }
 ha-card.board .cd { text-align:right; }
-ha-card.board .cd .big { color:#ffd24a; font-size:1.35em; }
+ha-card.board .cd .big { color:#ffd24a; font-size:1.25em; }
 ha-card.board .cd .small { display:none; }
 ha-card.board .binfo { font-size:.75em; text-align:right; color:#b8a35a; text-transform: uppercase; }
 ha-card.board .binfo .late, ha-card.board .binfo .cx { color:#ff6b5a; font-weight:700; }
@@ -228,7 +229,10 @@ class TisseoDeparturesCard extends HTMLElement {
     if (this.shadowRoot) this.shadowRoot.innerHTML = "";
   }
 
-  _selKey() { return `tisseo-card-filter:${this._config.entity || this._config.device}`; }
+  _selKey() {
+    const c = this._config;
+    return `tisseo-card-filter:${c.entity || c.device}|${c.title || ""}|${c.layout || "default"}`;
+  }
 
   _loadSel() {
     try {
@@ -246,7 +250,9 @@ class TisseoDeparturesCard extends HTMLElement {
   _filter(list) {
     const lines = (this._config.filter_lines || []).map((x) => String(x).toLowerCase());
     const dests = (this._config.filter_destinations || []).map((x) => String(x).toLowerCase()).filter(Boolean);
-    const sl = this._sel?.lines || new Set(), sd = this._sel?.dests || new Set();
+    // in-card chip selection only applies to cards that show the chips
+    const sel = this._config.show_filters ? this._sel : null;
+    const sl = sel?.lines || new Set(), sd = sel?.dests || new Set();
     return list.filter((d) => {
       const ln = String(d.line ?? "").toLowerCase(), de = String(d.destination ?? "").toLowerCase();
       if (lines.length && !lines.includes(ln) && !lines.includes(String(d.route_id ?? "").toLowerCase())) return false;
@@ -262,9 +268,15 @@ class TisseoDeparturesCard extends HTMLElement {
     if (!this._config.show_filters) { f.hidden = true; return; }
     // chips come from departures already narrowed by the static (YAML) filters
     const base = this._filter.call({ _config: this._config, _sel: null }, all);
-    const lines = new Map(), dests = new Set();
-    for (const d of base) { if (!lines.has(String(d.line))) lines.set(String(d.line), d.color); dests.add(String(d.destination)); }
+    const lines = new Map(), freq = new Map();
+    for (const d of base) {
+      if (!lines.has(String(d.line))) lines.set(String(d.line), d.color);
+      // direction chips follow the selected lines, most frequent first (max 6)
+      if (this._sel.lines.size && !this._sel.lines.has(String(d.line))) continue;
+      freq.set(String(d.destination), (freq.get(String(d.destination)) || 0) + 1);
+    }
     for (const l of this._sel.lines) if (!lines.has(l)) lines.set(l, null);
+    const dests = new Set([...freq].sort((a, b) => b[1] - a[1]).slice(0, 6).map((x) => x[0]));
     for (const x of this._sel.dests) dests.add(x);
     const sig = JSON.stringify([[...lines], [...dests], [...this._sel.lines], [...this._sel.dests]]);
     if (sig === this._fsig) return;
@@ -438,6 +450,8 @@ class TisseoDeparturesCard extends HTMLElement {
         row.addEventListener("animationend", (ev) => {
           if (ev.animationName === "tdc-in") row.classList.remove("enter");
         });
+        // another animation (e.g. "imminent") can replace tdc-in before it ends
+        setTimeout(() => row.classList.remove("enter"), 700 + i * 70);
         this._rows.set(k, row);
       }
       row._d = d;
@@ -638,11 +652,11 @@ const TDC_LABELS = {
   en: { entity: "Tisséo departure sensor (any sensor of the stop)", title: "Title", max: "Max departures",
         show_alerts: "Alerts ticker", layout: "Layout", show_filters: "Filter chips in the card",
         trip_dialog: "Tap a row for the trip's stops", filter_lines: "Only these lines",
-        filter_destinations: "Only destinations containing" },
+        filter_destinations: "Destination contains" },
   fr: { entity: "Capteur de départs Tisséo (n'importe quel capteur de l'arrêt)", title: "Titre",
         max: "Nombre de départs", show_alerts: "Bandeau d'alertes", layout: "Disposition",
         show_filters: "Filtres (puces) dans la carte", trip_dialog: "Toucher une ligne : arrêts du trajet",
-        filter_lines: "Uniquement ces lignes", filter_destinations: "Uniquement les destinations contenant" },
+        filter_lines: "Uniquement ces lignes", filter_destinations: "Destination contient" },
 };
 
 class TisseoDeparturesCardEditor extends HTMLElement {
