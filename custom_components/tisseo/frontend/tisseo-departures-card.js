@@ -1497,7 +1497,7 @@ window.customCards = window.customCards || [];
 if (!window.customCards.some((x) => x.type === "tisseo-departures-card")) {
   window.customCards.push({ type: "tisseo-departures-card", name: "Tisséo departures",
     description: "Next departures for a Tisséo stop: live countdowns, delays, disruptions, leave-now, departure board.",
-    preview: true, documentationURL: "https://github.com/your-github-user/tisseo-ha" });
+    preview: true, documentationURL: "https://github.com/TurbulenceDeterministe/tisseo-ha" });
   console.info(`%c TISSEO-DEPARTURES-CARD %c v${TDC_VERSION} `,
     "background:#db001b;color:#fff;font-weight:700", "background:#ffdd00;color:#000");
 }

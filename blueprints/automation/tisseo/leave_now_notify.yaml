@@ -5,7 +5,7 @@ blueprint:
     buffer reached for the next catchable departure). Set the walking time and buffer in
     the stop's options. Variables: `{{ line }}`, `{{ destination }}`, `{{ departure }}`, `{{ realtime }}`.
   domain: automation
-  source_url: https://github.com/your-github-user/tisseo-ha/blob/main/blueprints/automation/tisseo/leave_now_notify.yaml
+  source_url: https://github.com/TurbulenceDeterministe/tisseo-ha/blob/main/blueprints/automation/tisseo/leave_now_notify.yaml
   input:
     leave_sensor:
       name: Leave-now sensor

@@ -6,7 +6,7 @@ blueprint:
     Only real-time departures can be late: the metro has no live data in Tisséo's open feed.
     Variables: `{{ line }}`, `{{ destination }}`, `{{ delay_minutes }}`, `{{ expected }}`, `{{ stop_name }}`.
   domain: automation
-  source_url: https://github.com/your-github-user/tisseo-ha/blob/main/blueprints/automation/tisseo/delay_notify.yaml
+  source_url: https://github.com/TurbulenceDeterministe/tisseo-ha/blob/main/blueprints/automation/tisseo/delay_notify.yaml
   input:
     stop_name:
       name: Stop name filter (optional)

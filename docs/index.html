@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tisséo for Home Assistant: real-time Toulouse transit, no API key</title>
+<meta name="description" content="Home Assistant integration and dashboard card for the Toulouse Tisséo network: live departures, disruptions, journeys, leave-now, VélôToulouse and P+R. Open data, no API key.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="Tisséo for Home Assistant">
+<meta property="og:description" content="Real-time Toulouse transit, no API key.">
+<meta property="og:image" content="images/banner.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23e2001a'/%3E%3Cpath d='M20 14h24a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H20a6 6 0 0 1-6-6V20a6 6 0 0 1 6-6zM18 26h28M24 50l-4 6M40 50l4 6' stroke='%23fff' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f7fb; --surface: #ffffff; --raised: #eef1f7; --text: #121826; --text-2: #4a5568; --line: #dfe3ec;
+  --accent: #e2001a; --accent-2: #ffdd00; --blue: #0069b4; --green: #6aa531; --orange: #f39200;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.08);
+  --radius: 18px; --maxw: 1120px;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+}
+:root[data-theme="dark"] { --bg: #0b1220; --surface: #121a2b; --raised: #1a2438; --text: #eef2f8; --text-2: #a9b4c6; --line: #24304a; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35); --green: #8cc63f; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0b1220; --surface: #121a2b; --raised: #1a2438; --text: #eef2f8; --text-2: #a9b4c6; --line: #24304a; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35); --green: #8cc63f; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.6; font-size: 16px; -webkit-font-smoothing: antialiased; }
+a { color: var(--blue); text-underline-offset: 3px; }
+:root[data-theme="dark"] a { color: #6cb6ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) a { color: #6cb6ff; } }
+img { max-width: 100%; height: auto; display: block; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .9em; background: var(--raised); padding: .1em .4em; border-radius: 6px; }
+pre { background: #0b1220; color: #e6edf7; padding: 16px 18px; border-radius: 12px; overflow-x: auto; font-size: 14px; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; }
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
+
+/* nav */
+.nav { position: sticky; top: 0; z-index: 10; backdrop-filter: saturate(1.4) blur(10px); background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 18px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--text); text-decoration: none; letter-spacing: -.01em; }
+.brand svg { width: 30px; height: 30px; }
+.nav ul { display: flex; gap: 18px; list-style: none; margin: 0 0 0 auto; padding: 0; }
+.nav ul a { color: var(--text-2); text-decoration: none; font-weight: 500; font-size: 15px; }
+.nav ul a:hover { color: var(--text); }
+.toggle { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; width: 38px; height: 38px; cursor: pointer; display: grid; place-items: center; }
+.toggle svg { width: 18px; height: 18px; }
+@media (max-width: 760px) { .nav ul { display: none; } .toggle { margin-left: auto; } }
+
+/* hero */
+.hero { padding: 48px 0 24px; }
+.banner { border-radius: 24px; overflow: hidden; box-shadow: var(--shadow); }
+.lead { font-size: clamp(18px, 2.2vw, 21px); color: var(--text-2); max-width: 780px; margin: 28px auto 0; text-align: center; }
+.lead b { color: var(--text); }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 20px 0 0; padding: 0; list-style: none; }
+.pills li { font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--text-2); }
+.pills li i { font-style: normal; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 28px 0 8px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 12px; font-weight: 700; text-decoration: none; border: 1px solid transparent; transition: transform .15s ease; }
+.btn:hover { transform: translateY(-1px); }
+.btn-primary { background: var(--accent); color: #fff !important; }
+.btn-ghost { background: var(--surface); color: var(--text) !important; border-color: var(--line); }
+.btn svg { width: 18px; height: 18px; }
+
+section { padding: 56px 0; }
+h2 { font-size: clamp(26px, 3.2vw, 34px); line-height: 1.2; letter-spacing: -.02em; margin: 0 0 8px; }
+.sub { color: var(--text-2); margin: 0 0 28px; max-width: 720px; }
+.kicker { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+
+.demo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); max-width: 840px; margin: 0 auto; }
+.demo img { border-radius: 10px; width: 100%; }
+.caption { text-align: center; color: var(--text-2); font-size: 14px; margin-top: 10px; }
+
+/* features */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.card .shot { background: var(--raised); display: grid; place-items: center; padding: 14px; height: 240px; }
+.card .shot img { max-height: 212px; width: auto; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+.card .body { padding: 18px 20px 20px; }
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.card p { margin: 0; color: var(--text-2); font-size: 15px; }
+.mini { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 22px; }
+.mini div { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.mini b { display: block; margin-bottom: 2px; }
+.mini span { color: var(--text-2); font-size: 14px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+
+/* flow diagram */
+.flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; }
+.flow .node { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; text-align: center; box-shadow: var(--shadow); min-height: 108px; display: flex; flex-direction: column; justify-content: center; }
+.flow .node b { display: block; font-size: 15px; }
+.flow .node small { color: var(--text-2); font-size: 13px; line-height: 1.4; display: block; margin-top: 4px; }
+.flow .src { display: grid; gap: 8px; }
+.flow .src .node { min-height: 0; padding: 10px; }
+.flow .node.opt { border-style: dashed; }
+.flow .arrow { color: var(--text-2); font-size: 22px; font-weight: 700; }
+.flow .bar { height: 4px; border-radius: 2px; margin: 0 auto 8px; width: 40px; }
+@media (max-width: 900px) { .flow { grid-template-columns: 1fr; } .flow .arrow { transform: rotate(90deg); text-align: center; } }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 12px; }
+.steps li { counter-increment: s; position: relative; padding: 14px 18px 14px 56px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; color: var(--text-2); }
+.steps li::before { content: counter(s); position: absolute; left: 16px; top: 13px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 14px; display: grid; place-items: center; }
+.steps b { color: var(--text); }
+
+/* install */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+.two > * { min-width: 0; }
+.panel code { overflow-wrap: anywhere; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; box-shadow: var(--shadow); }
+.panel h3 { margin: 0 0 10px; }
+.panel ol { padding-left: 20px; margin: 0; color: var(--text-2); }
+.panel ol li { margin: 6px 0; }
+.myha { display: inline-flex; align-items: center; gap: 10px; background: #18bcf2; color: #fff !important; text-decoration: none; font-weight: 700; padding: 10px 16px; border-radius: 10px; margin: 6px 0 12px; }
+.myha svg { width: 20px; height: 20px; }
+
+/* tables */
+.table { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); background: var(--raised); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; }
+
+/* faq */
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 0 20px; margin-bottom: 10px; }
+summary { cursor: pointer; font-weight: 700; padding: 16px 0; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; color: var(--text-2); font-weight: 400; font-size: 22px; line-height: 1; }
+details[open] summary::after { content: "−"; }
+details p { margin: 0 0 16px; color: var(--text-2); }
+
+.note { border-left: 4px solid var(--accent-2); background: var(--surface); padding: 16px 20px; border-radius: 0 14px 14px 0; color: var(--text-2); }
+footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--text-2); font-size: 14px; }
+footer .wrap { display: grid; gap: 10px; }
+.lines { display: flex; height: 6px; }
+.lines span { flex: 1; }
+</style>
+</head>
+<body>
+<div class="lines" aria-hidden="true"><span style="background:#e2001a"></span><span style="background:#ffdd00"></span><span style="background:#0069b4"></span><span style="background:#f39200"></span><span style="background:#8cc63f"></span></div>
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#e2001a"/><path d="M20 14h24a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H20a6 6 0 0 1-6-6V20a6 6 0 0 1 6-6zM18 26h28M24 50l-4 6M40 50l4 6" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="23" cy="36" r="2.6" fill="#fff"/><circle cx="41" cy="36" r="2.6" fill="#fff"/></svg>
+      Tisséo for HA
+    </a>
+    <ul>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#card">Card</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="https://github.com/TurbulenceDeterministe/tisseo-ha">GitHub</a></li>
+    </ul>
+    <button class="toggle" id="theme" type="button" aria-label="Toggle dark mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
+</nav>
+
+<main id="top">
+<header class="hero">
+  <div class="wrap">
+    <div class="banner"><img src="images/banner.png" width="1920" height="600" alt="Tisséo for Home Assistant: real-time Toulouse transit, no API key"></div>
+    <p class="lead">Bring the Toulouse network into <b>Home Assistant</b>: live departures, disruptions, journeys with up to two transfers, a "leave now" helper, VélôToulouse bikes and park-and-ride capacity, plus an animated dashboard card. <b>Open data only: no API key, no account.</b></p>
+    <ul class="pills" aria-label="Project facts">
+      <li><i style="background:#41bdf5"></i>HACS custom repository</li>
+      <li><i style="background:#18bcf2"></i>Home Assistant 2025.1+</li>
+      <li><i style="background:#e2001a"></i>Version 1.1.1</li>
+      <li><i style="background:#8cc63f"></i>MIT licence</li>
+      <li><i style="background:#ffdd00"></i>English · Français</li>
+    </ul>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=TurbulenceDeterministe&amp;repository=tisseo-ha&amp;category=integration">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>Install with HACS</a>
+      <a class="btn btn-ghost" href="https://github.com/TurbulenceDeterministe/tisseo-ha">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>View on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section aria-labelledby="demo-h" style="padding-top:24px">
+  <div class="wrap">
+    <h2 id="demo-h" class="sr" style="position:absolute;left:-9999px">Demo</h2>
+    <div class="demo"><img src="images/demo.gif" width="800" height="607" loading="lazy" alt="Animated demo: Tisséo cards ticking down in a Home Assistant dashboard"></div>
+    <p class="caption">Real dashboard on the test instance: countdowns, live icons, a "leave now" block, a departure board and journey sensors.</p>
+  </div>
+</section>
+
+<section id="features" aria-labelledby="f-h">
+  <div class="wrap">
+    <span class="kicker">Features</span>
+    <h2 id="f-h">Everything you need to catch your bus</h2>
+    <p class="sub">One integration for stops, journeys, bikes and park-and-ride, and a card that feels native in Home Assistant.</p>
+    <div class="grid">
+      <article class="card"><div class="shot"><img src="images/v11_default.png" loading="lazy" alt="Default card with the next departure and grouped rows"></div>
+        <div class="body"><h3>Live departures</h3><p>Countdowns tick every second. A live icon appears only for real-time data, and delays only from 90 s. Departures are grouped by direction, and a big block tells you when to leave.</p></div></article>
+      <article class="card"><div class="shot"><img src="images/v11_board.png" loading="lazy" alt="Dark departure board with metro and bus panels"></div>
+        <div class="body"><h3>Departure board</h3><p>A dark station-style board with separate metro and bus/tram panels and paged disruptions. A compact layout is also available.</p></div></article>
+      <article class="card"><div class="shot"><img src="images/v111_ourliac_trip.png" loading="lazy" alt="Trip dialog listing the stops of a line 87 trip"></div>
+        <div class="body"><h3>Trip details</h3><p>Tap a departure to see every stop of the trip with its scheduled and live times. This also works for extra trips that exist only in the live feed.</p></div></article>
+      <article class="card"><div class="shot"><img src="images/v111_next_service.png" loading="lazy" alt="Card showing the next departure tomorrow at 06:19"></div>
+        <div class="body"><h3>Never a blank card</h3><p>No bus in the next 3 hours? The card says when the next one leaves, even if that is Monday morning.</p></div></article>
+      <article class="card"><div class="shot"><img src="images/v11_dark.png" loading="lazy" alt="Cards in dark theme"></div>
+        <div class="body"><h3>Feels native</h3><p>It follows your theme, dark mode and 12/24 h setting. Badge shapes differ by mode and colours meet AA contrast. Visual editor in English and French.</p></div></article>
+      <article class="card"><div class="shot"><img src="images/v11_editor.png" loading="lazy" alt="Visual card editor"></div>
+        <div class="body"><h3>No YAML required</h3><p>Set up everything from the UI: search a stop by name or code, pick one nearby, or build a journey. The card is registered automatically.</p></div></article>
+    </div>
+    <div class="mini">
+      <div><b><span class="dot" style="background:#e2001a"></span>Journeys</b><span>Direct, or with one or two transfers (e.g. 25 → A → B), with "transfer at risk" warnings.</span></div>
+      <div><b><span class="dot" style="background:#ffdd00"></span>Leave now</b><span>Based on your walking time and a buffer, as sensors you can automate.</span></div>
+      <div><b><span class="dot" style="background:#0069b4"></span>Disruptions</b><span><code>tisseo_disruption</code> and <code>tisseo_delay</code> events, with 3 notification blueprints.</span></div>
+      <div><b><span class="dot" style="background:#f39200"></span>Timetable changes</b><span>Warns when tomorrow's service differs (holidays, works).</span></div>
+      <div><b><span class="dot" style="background:#8cc63f"></span>Bikes &amp; P+R</b><span>VélôToulouse bikes and docks; park-and-ride capacity.</span></div>
+      <div><b><span class="dot" style="background:#6b7280"></span>Reliable</b><span>Retries, a circuit breaker, health sensors and diagnostics.</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="how" aria-labelledby="h-h">
+  <div class="wrap">
+    <span class="kicker">How it works</span>
+    <h2 id="h-h">From open data to your dashboard</h2>
+    <p class="sub">Public feeds only. The timetable is indexed locally, so lookups are instant and work even when the live feed drops out.</p>
+    <div class="flow" role="img" aria-label="Data flow: GTFS timetables and GTFS-RT live feed, plus an optional user API key, go into a lean SQLite index and coordinators, which publish sensors read by the dashboard card.">
+      <div class="src">
+        <div class="node"><div class="bar" style="background:#0069b4"></div><b>GTFS</b><small>timetables, checked daily</small></div>
+        <div class="node"><div class="bar" style="background:#e2001a"></div><b>GTFS-RT</b><small>trip updates + alerts</small></div>
+        <div class="node opt"><div class="bar" style="background:#9aa3b2"></div><b>Tisséo API v2</b><small>optional, your own key</small></div>
+      </div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><div class="bar" style="background:#ffdd00"></div><b>Lean index</b><small>SQLite: your stops + trunk lines</small></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><div class="bar" style="background:#f39200"></div><b>Coordinators</b><small>departures · journeys · trip details</small></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><div class="bar" style="background:#8cc63f"></div><b>Entities</b><small>sensors, binary sensors, events, services</small></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><div class="bar" style="background:#18bcf2"></div><b>Card</b><small>bundled, auto-loaded; WebSocket for trip details</small></div>
+    </div>
+    <ol class="steps">
+      <li><b>Timetable.</b> The GTFS (about 14 MB) is downloaded once and checked daily. It is indexed into a lean SQLite file that keeps only the trips serving your stops, plus the metro, tram, Linéo and Téléo trips once you configure a journey.</li>
+      <li><b>Real time.</b> GTFS-RT is polled every 60 s by default and merged on top. Cancelled trips and skipped stops are removed, and trips added by the feed are included.</li>
+      <li><b>Entities.</b> Coordinators publish departures, journeys and alerts as entities. The card reads only those entities, plus one WebSocket command for the trip dialog.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="install" aria-labelledby="i-h">
+  <div class="wrap">
+    <span class="kicker">Install</span>
+    <h2 id="i-h">Up and running in two minutes</h2>
+    <p class="sub">Requires Home Assistant 2025.1 or newer.</p>
+    <div class="two">
+      <div class="panel">
+        <h3>HACS (recommended)</h3>
+        <a class="myha" href="https://my.home-assistant.io/redirect/hacs_repository/?owner=TurbulenceDeterministe&amp;repository=tisseo-ha&amp;category=integration">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 2 11h3v10h14V11h3z"/></svg>Open in HACS</a>
+        <ol>
+          <li>Or in HACS: ⋮ → <i>Custom repositories</i> → <code>https://github.com/TurbulenceDeterministe/tisseo-ha</code>, category <b>Integration</b>.</li>
+          <li>Install <b>Tisséo</b>, then restart Home Assistant.</li>
+        </ol>
+      </div>
+      <div class="panel">
+        <h3>Manual</h3>
+        <ol>
+          <li>Copy <code>custom_components/tisseo</code> into <code>&lt;config&gt;/custom_components/</code>.</li>
+          <li>Restart Home Assistant.</li>
+        </ol>
+        <h3 style="margin-top:18px">Then add it</h3>
+        <a class="myha" href="https://my.home-assistant.io/redirect/config_flow_start/?domain=tisseo">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>Add the Tisséo integration</a>
+        <ol><li>Or: <i>Settings → Devices &amp; services → Add integration → Tisséo</i>.</li></ol>
+      </div>
+    </div>
+
+    <h3 style="margin:40px 0 12px">Configuration</h3>
+    <div class="table"><table>
+      <thead><tr><th>Entry type</th><th>What you do</th></tr></thead>
+      <tbody>
+        <tr><td><b>Stop – search</b></td><td>Type a name (<code>capitole</code>), a GTFS id (<code>stop_area:SA_1715</code>) or a stop code. Pick the whole stop area or a platform, and optionally some lines.</td></tr>
+        <tr><td><b>Stop – nearby</b></td><td>Pick from the 10 nearest stops (within 5 km) of your Home Assistant home location.</td></tr>
+        <tr><td><b>Journey</b></td><td>Pick an origin and a destination. Direct trips plus one or two transfers (minimum 3 min by default). If nothing leaves within 3 h, the next service is shown (<code>later: true</code>).</td></tr>
+        <tr><td><b>VélôToulouse</b></td><td>Pick from the 15 nearest stations, with live bikes and docks.</td></tr>
+        <tr><td><b>Park-and-ride</b></td><td>Tisséo P+R car parks by distance, with their capacity.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="sub" style="margin-top:14px">Stop options: line filter · number of sensors · poll interval · network-wide alerts · walking time and buffer for leave-now · delay event threshold · optional Tisséo API key.</p>
+  </div>
+</section>
+
+<section id="card" aria-labelledby="c-h">
+  <div class="wrap">
+    <span class="kicker">Dashboard card</span>
+    <h2 id="c-h">One card, three layouts</h2>
+    <p class="sub">Registered automatically, so there is no resource to add. Pick <b>Tisséo departures</b> in the card picker, or use YAML:</p>
+<pre><code>type: custom:tisseo-departures-card
+entity: sensor.tisseo_jeanne_d_arc_departure_1   # any sensor of the stop
+layout: default                                  # default | compact | board</code></pre>
+    <div class="table"><table>
+      <thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>entity</code></td><td>—</td><td>Any sensor of a Tisséo stop (required).</td></tr>
+        <tr><td><code>title</code></td><td>stop name</td><td>Card title.</td></tr>
+        <tr><td><code>layout</code></td><td><code>default</code></td><td><code>default</code>, <code>compact</code> or <code>board</code>.</td></tr>
+        <tr><td><code>max_departures</code></td><td><code>6</code></td><td>Rows shown (directions, when grouped).</td></tr>
+        <tr><td><code>group</code></td><td><code>true</code></td><td>One row per line + direction, with "then" times.</td></tr>
+        <tr><td><code>hero</code></td><td><code>auto</code></td><td>Big "next departure" block; <code>auto</code> = default layout only.</td></tr>
+        <tr><td><code>hero_line</code></td><td>—</td><td>Pin the hero to one direction, e.g. <code>"B|Borderouge"</code>.</td></tr>
+        <tr><td><code>hero_min_minutes</code></td><td><code>2</code></td><td>Skip departures leaving sooner than this in the hero.</td></tr>
+        <tr><td><code>leave_entity</code></td><td>auto</td><td>The stop's "leave in" sensor.</td></tr>
+        <tr><td><code>alerts</code></td><td><code>banner</code></td><td><code>banner</code>, <code>count</code> or <code>off</code>.</td></tr>
+        <tr><td><code>timetable_notice</code></td><td><code>true</code></td><td>Notice when tomorrow's timetable differs.</td></tr>
+        <tr><td><code>show_filters</code></td><td><code>false</code></td><td>Line / direction chips, saved per card in this browser.</td></tr>
+        <tr><td><code>filter_lines</code> / <code>filter_destinations</code></td><td>—</td><td>Fixed filters, e.g. <code>[B, L1]</code> / <code>[Ramonville]</code>.</td></tr>
+        <tr><td><code>trip_dialog</code></td><td><code>true</code></td><td>Tap a row to open the trip's stops.</td></tr>
+        <tr><td><code>show_clock</code></td><td><code>false</code></td><td>Clock in the header.</td></tr>
+        <tr><td><code>badge_contrast</code></td><td><code>auto</code></td><td><code>auto</code> (AA contrast) or <code>brand</code> (GTFS colours as they are).</td></tr>
+        <tr><td><code>board_theme</code></td><td><code>dark</code></td><td><code>dark</code> or <code>auto</code> (follow Home Assistant).</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="faq" aria-labelledby="q-h">
+  <div class="wrap">
+    <span class="kicker">FAQ</span>
+    <h2 id="q-h">Questions</h2>
+    <details><summary>Why is there no live time for the metro?</summary><p>Tisséo's public real-time feed (GTFS-RT) has no metro trip updates. The official API documentation (21/05/2025) says its real time covers only bus and tram, so a key would not change this. Metro times come from the timetable, and the card labels them "scheduled". Metro disruptions do come through as alerts.</p></details>
+    <details><summary>Why is no API key needed?</summary><p>Tisséo publishes its timetables (GTFS) and real time (GTFS-RT) as open data under ODbL, and VélôToulouse publishes GBFS. None of these feeds needs a key. If Tisséo gave you a personal API v2 key, you can add it as an extra source. The integration never ships, extracts or reuses any key from the official app.</p></details>
+    <details><summary>A stop says "No departures in the next 3 h".</summary><p>Some lines don't run in the evening or on Sundays. The card then shows the next scheduled departure, which is also available as the <code>next_service</code> attribute.</p></details>
+    <details><summary>How big is the local index?</summary><p>From about 7 MB (one quiet stop) to about 26 MB (several busy hubs). Once a journey is configured it is about 32–35 MB, because the trunk lines are added. It rebuilds automatically when you add stops or upgrade.</p></details>
+    <details><summary>Can it show live P+R occupancy?</summary><p>No. Only the capacity is open data. The live figures exist only on tisseo.fr, which is bot-protected, so they are not used.</p></details>
+    <details><summary>What are the limits of journeys?</summary><p>At most two transfers. The middle leg must be a metro, tram, Linéo or Téléo line, and transfers happen within the same stop area (no walking between different stops).</p></details>
+  </div>
+</section>
+
+<section aria-labelledby="l-h" style="padding-top:8px">
+  <div class="wrap">
+    <h2 id="l-h" style="font-size:22px">Credits, data licence &amp; disclaimer</h2>
+    <div class="note">
+      <p style="margin-top:0">Timetables and real-time data © <b>Tisséo</b>, under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License (ODbL)</a>, via <a href="https://transport.data.gouv.fr/">transport.data.gouv.fr</a> and <a href="https://data.toulouse-metropole.fr/">data.toulouse-metropole.fr</a>. VélôToulouse data © JCDecaux. P+R data © Toulouse Métropole (ODbL). Code under the <a href="https://github.com/TurbulenceDeterministe/tisseo-ha/blob/main/LICENSE">MIT licence</a>.</p>
+      <p style="margin-bottom:0"><b>Unofficial project.</b> It is not affiliated with, endorsed by or supported by Tisséo, Tisséo Collectivités, Toulouse Métropole or JCDecaux. "Tisséo" and the line names and colours belong to their owners. For official information, see <a href="https://www.tisseo.fr/">tisseo.fr</a>.</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div><b>Tisséo for Home Assistant</b> · v1.1.1 · <a href="https://github.com/TurbulenceDeterministe/tisseo-ha">GitHub</a> · <a href="https://github.com/TurbulenceDeterministe/tisseo-ha/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/TurbulenceDeterministe/tisseo-ha/blob/main/README.fr.md">Français</a> · <a href="https://github.com/TurbulenceDeterministe/tisseo-ha/issues">Issues</a></div>
+    <div>This page is self-contained: it loads no external fonts, scripts or trackers.</div>
+  </div>
+</footer>
+<script>
+(function () {
+  var root = document.documentElement, key = "tisseo-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.dataset.theme = saved; } catch (e) {}
+  document.getElementById("theme").addEventListener("click", function () {
+    var dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem(key, root.dataset.theme); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

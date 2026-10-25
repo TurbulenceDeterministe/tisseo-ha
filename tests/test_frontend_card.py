@@ -52,7 +52,7 @@ def test_card_v11_design_is_inlined_and_offline():
     assert "fonts.googleapis" not in src and "cdn" not in src.lower()
     # the only absolute URL is the documentation link of the card picker
     urls = set(re.findall(r"https?://[^\s\"'`)]+", src))
-    assert urls <= {"https://github.com/your-github-user/tisseo-ha"}, urls
+    assert urls <= {"https://github.com/TurbulenceDeterministe/tisseo-ha"}, urls
     for cls in (".tc-hero", ".tc-row__hit", ".tc-chip[aria-pressed", ".tc-dialog", ".tc-board__cols--split", ".tc-alerts__list"):
         assert cls in src, cls
     for opt in ("max_departures", "group", "hero", "hero_line", "leave_entity", "alerts", "badge_contrast", "board_theme", "show_clock", "timetable_notice"):

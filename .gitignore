@@ -4,3 +4,14 @@ __pycache__/
 *.pyc
 *.sqlite
 *.zip
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.pb
+node_modules/
+.venv/
+venv/
+*.log
+.DS_Store
+credentials*.txt

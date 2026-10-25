@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="t d">
+  <title id="t">Tisséo for Home Assistant</title>
+  <desc id="d">Real-time Toulouse transit, no API key</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220"/><stop offset="1" stop-color="#16213a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.78" cy="0.45" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.07"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clip"><rect width="1280" height="400" rx="24"/></clipPath>
+  </defs>
+  <rect width="1280" height="400" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="400" rx="24" fill="url(#glow)"/>
+  <g clip-path="url(#clip)"><g transform="translate(170 0)">
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="14">
+    <path d="M700 340 L820 220 L1000 220 L1120 100 L1280 100" stroke="#e2001a"/>
+    <path d="M820 0 L820 120 L900 200 L900 400" stroke="#ffdd00"/>
+    <path d="M680 120 L780 120 L860 200 L1060 200 L1180 320 L1280 320" stroke="#0069b4" stroke-width="10"/>
+    <path d="M760 400 L760 300 L840 220 L1000 380" stroke="#f39200" stroke-width="10" stroke-dasharray="1 22"/>
+    <path d="M1040 400 L1040 300 L1120 220 L1280 220" stroke="#8cc63f" stroke-width="10"/>
+  </g>
+  <g fill="#0B1220" stroke="#fff" stroke-width="5">
+    <circle cx="820" cy="220" r="15"/><circle cx="1000" cy="220" r="11"/><circle cx="1120" cy="100" r="11"/>
+    <circle cx="900" cy="200" r="15"/><circle cx="780" cy="120" r="10"/><circle cx="1180" cy="320" r="10"/>
+    <circle cx="1120" cy="220" r="10"/><circle cx="760" cy="300" r="10"/>
+  </g>
+  </g></g>
+  <g font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+    <g transform="translate(72 120)">
+      <rect width="64" height="64" rx="16" fill="#e2001a"/>
+      <path d="M20 14h24a6 6 0 0 1 6 6v18a6 6 0 0 1-6 6H20a6 6 0 0 1-6-6V20a6 6 0 0 1 6-6zM18 26h28M24 50l-4 6M40 50l4 6" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <circle cx="23" cy="36" r="2.6" fill="#fff"/><circle cx="41" cy="36" r="2.6" fill="#fff"/>
+    </g>
+    <text x="72" y="244" fill="#ffffff" font-size="52" font-weight="800" letter-spacing="-1">Tisséo <tspan fill="#ffdd00">for</tspan> Home Assistant</text>
+    <text x="74" y="292" fill="#c7d0e0" font-size="28" font-weight="500">Real-time Toulouse transit, no API key</text>
+    <g font-size="17" font-weight="700" fill="#0B1220">
+      <rect x="74" y="320" width="108" height="34" rx="17" fill="#ffdd00"/><text x="128" y="343" text-anchor="middle">GTFS-RT</text>
+      <rect x="192" y="320" width="128" height="34" rx="17" fill="#ffffff"/><text x="256" y="343" text-anchor="middle">Open data</text>
+      <rect x="330" y="320" width="74" height="34" rx="17" fill="#8cc63f"/><text x="367" y="343" text-anchor="middle">HACS</text>
+    </g>
+  </g>
+</svg>
