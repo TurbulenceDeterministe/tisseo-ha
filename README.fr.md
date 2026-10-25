@@ -15,7 +15,7 @@ Pour le réseau toulousain : prochains passages (temps réel quand il est publi�
 
 **En option :** vous pouvez ajouter *votre propre* clé pour l'API officielle Tisséo v2, à demander à `opendata@tisseo.fr`. L'intégration n'embarque et n'extrait aucune clé. Voir [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 
-![Disposition par défaut](docs/images/v1_default.png)
+![Disposition par défaut](docs/images/v11_default.png)
 
 ## Installation
 - **HACS :** ⋮ → *Dépôts personnalisés* → ajoutez ce dépôt avec la catégorie **Intégration**. Installez *Tisséo*, puis redémarrez.
@@ -69,20 +69,41 @@ Filtre de lignes · nombre de capteurs (1–10, 3 par défaut) · intervalle (�
 - **WebSocket :** `tisseo/trip_stops`. Toucher une ligne de la carte ouvre la liste des arrêts de la course.
 
 ## Carte
+Chargée automatiquement (aucune ressource à ajouter), avec un éditeur visuel « Tisséo departures ». Un seul fichier autonome (ni build, ni polices ou scripts externes) qui suit le thème Home Assistant, mode sombre compris.
+
 ```yaml
 type: custom:tisseo-departures-card
-entity: sensor.tisseo_jeanne_d_arc_departure_1
+entity: sensor.tisseo_jeanne_d_arc_departure_1   # n'importe quel capteur de l'arrêt
 layout: default          # default | compact | board
-show_filters: true       # puces ligne / destination (choix mémorisé par carte dans ce navigateur)
+max_departures: 6        # `max` (1.0) reste accepté
+group: true              # une ligne par ligne + direction, avec « puis »
+hero: auto               # bloc « prochain départ »
+hero_line: "B|Borderouge"  # facultatif : épingler une direction
+alerts: banner           # banner | count | off  (`show_alerts: false` reste accepté)
+timetable_notice: true   # avis si les horaires de demain changent
+show_filters: true       # puces ligne / direction (choix mémorisé par carte dans ce navigateur)
 filter_lines: [B, L1]
 trip_dialog: true
+show_clock: false
+badge_contrast: auto     # auto (contraste AA) | brand (couleurs GTFS telles quelles)
+board_theme: dark        # dark | auto
 ```
 
-| compact | tableau (board) | détail course |
-|---|---|---|
-| ![compact](docs/images/v1_compact.png) | ![board](docs/images/v1_board.png) | ![course](docs/images/v1_trip_dialog.png) |
+- **Comptes à rebours** depuis `expected`, à la seconde (en pause hors écran). Icône temps réel seulement si `realtime` est vrai.
+- **Retards** affichés à partir de 90 s ; courses supprimées barrées.
+- **Partir maintenant :** avec un temps de marche, le bloc principal utilise le capteur « partir dans » (marche + marge).
+- **Perturbations :** Tisséo ne publie pas de gravité ; elle est déduite de l'effet GTFS-RT.
+- **Avis :** temps réel indisponible, données anciennes, changement d'horaires demain.
+- **Tableau :** métro et bus/tram en deux panneaux sur grand écran, perturbations en rotation toutes les 8 s.
+- **Accessibilité :** formes de pastille par mode, libellés vocaux, mouvement réduit, contraste élevé et couleurs forcées respectés.
 
-L'éditeur visuel est traduit en français et en anglais : ![éditeur](docs/images/v1_editor.png)
+| défaut | compact | tableau (board) |
+|---|---|---|
+| ![défaut](docs/images/v11_default.png) | ![compact](docs/images/v11_compact.png) | ![board](docs/images/v11_board.png) |
+
+| thème sombre | détail course | éditeur visuel |
+|---|---|---|
+| ![sombre](docs/images/v11_dark.png) | ![course](docs/images/v11_trip_dialog.png) | ![éditeur](docs/images/v11_editor.png) |
 
 ## Limites
 - **Pas de temps réel métro.** Le GTFS-RT n'en publie pas, et d'après la documentation de l'API (21/05/2025) son temps réel ne couvre que le bus et le tram.

@@ -1,697 +1,1460 @@
 /*
- * tisseo-departures-card – animated Lovelace card for the Tisséo integration.
- * Vanilla web component, no build step. Served automatically by the integration
- * at /tisseo_static/tisseo-departures-card.js (or add it as a dashboard resource).
+ * tisseo-departures-card – Lovelace card for the Tisséo integration (design v2).
+ * Vanilla web component, single file, no build step, no external resources.
+ * Served by the integration at /tisseo_static/tisseo-departures-card.js.
  *
  *   type: custom:tisseo-departures-card
  *   entity: sensor.tisseo_capitole_departure_1   # any sensor of the stop works
- *   title: Capitole            # optional (defaults to the stop name)
- *   max: 5                     # optional, max departures shown
- *   show_alerts: true          # optional, scrolling alerts ticker
- *   alerts_entity: sensor.…    # optional, auto-detected from the same device
- *   layout: default            # default | compact | board (station departure board)
- *   filter_lines: [A, "14"]    # optional, only these lines (short names)
- *   filter_destinations: [Balma]  # optional, destination contains any of these
- *   show_filters: false        # optional, tappable line / direction chips in the card
+ *   layout: default            # default | compact | board
+ *   max_departures: 6          # rows (directions when grouped); legacy `max` still accepted
+ *   group: true                # one row per line + direction, next departures as "then"
+ *   hero: auto                 # highlight the next catchable departure (auto: default layout only)
+ *   hero_line: "B|Borderouge"  # optional, pin the hero to a direction
+ *   leave_entity: …            # optional, auto-detected "leave in" sensor of the stop
+ *   alerts: banner             # banner | count | off   (legacy show_alerts: false → off)
+ *   timetable_notice: true     # notice when tomorrow's timetable differs
+ *   show_filters: false        # line / direction chips (selection saved per card in this browser)
+ *   filter_lines: [B, L1]      # fixed filters; filter_destinations: [Ramonville]
  *   trip_dialog: true          # tap a row to see all the stops of that trip
+ *   show_clock: false · badge_contrast: auto|brand · board_theme: dark|auto
  */
-const TDC_VERSION = "1.0.0";
+(() => {
+const TDC_VERSION = "1.1.0";
+const STYLES = `/* ==========================================================================
+   tisseo-card.css — design system v2 for custom:tisseo-departures-card
+   Drop-in: paste into the card's static styles (Shadow DOM). The root element
+   is <ha-card class="tc" data-layout="default|compact|board" data-theme="light|dark">.
+   Every variable falls back to a Home Assistant theme variable, then to a value.
+   Override from an HA theme with the --tisseo-* variables.
+   ========================================================================== */
 
-const TDC_I18N = {
-  en: { now: "now", min: "min", live: "live", timetable: "timetable", ontime: "on time",
-        late: "late", early: "early", canceled: "canceled", nodep: "No departures in the next 3 h",
-        livelines: "Live", nolive: "timetable only", alerts: "alerts", unavailable: "Entity not found",
-        sched: "sched.", all: "All", stops: "stops", close: "Close", loading: "Loading…",
-        tripErr: "Trip details unavailable", skipped: "skipped", board_line: "Line",
-        board_dest: "Destination", board_time: "Departs", board_info: "Info", arr: "arr." },
-  fr: { now: "à quai", min: "min", live: "temps réel", timetable: "théorique", ontime: "à l'heure",
-        late: "retard", early: "avance", canceled: "supprimé", nodep: "Aucun départ dans les 3 h",
-        livelines: "Temps réel", nolive: "horaires théoriques", alerts: "alertes",
-        unavailable: "Entité introuvable", sched: "prévu", all: "Toutes", stops: "arrêts",
-        close: "Fermer", loading: "Chargement…", tripErr: "Détail du trajet indisponible",
-        skipped: "non desservi", board_line: "Ligne", board_dest: "Destination",
-        board_time: "Départ", board_info: "Info", arr: "arr." },
-};
+/* ---------- 1. Design variables ---------------------------------------------------- */
+.tc {
+  /* surfaces & text — inherited from the HA theme */
+  --tc-surface: var(--ha-card-background, var(--card-background-color, #ffffff));
+  --tc-raised: var(--secondary-background-color, #f2f3f5);
+  --tc-text: var(--primary-text-color, #212121);
+  --tc-text-2: var(--secondary-text-color, #5f6368);
+  --tc-divider: var(--divider-color, rgba(0, 0, 0, 0.12));
+  --tc-accent: var(--primary-color, #009ac7);
+  --tc-hover: rgba(127, 127, 127, 0.08);
 
-const TDC_CSS = `
-:host { --tdc-accent: var(--primary-color, #03a9f4); --tdc-late: var(--error-color, #db4437);
-  --tdc-early: var(--success-color, #43a047); --tdc-muted: var(--secondary-text-color, #727272);
-  --tdc-divider: var(--divider-color, rgba(127,127,127,.2)); display:block; }
-ha-card { overflow: hidden; position: relative; }
-[hidden] { display: none !important; }
-.header { display:flex; align-items:center; gap:12px; padding:16px 16px 8px; }
-.header .icon { width:40px; height:40px; border-radius:12px; display:grid; place-items:center;
-  background: color-mix(in srgb, var(--tdc-accent) 15%, transparent); color: var(--tdc-accent); flex:none; }
-.header .icon ha-icon { --mdc-icon-size: 24px; }
-.header .t { flex:1; min-width:0; }
-.header .title { font-size:1.25em; font-weight:600; color:var(--primary-text-color); white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis; }
-.header .sub { font-size:.85em; color:var(--tdc-muted); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.header .clock { font-variant-numeric: tabular-nums; font-size:1.05em; color:var(--tdc-muted); font-weight:500; }
-.list { position:relative; padding: 4px 8px 8px; }
-.row { position:relative; display:grid; grid-template-columns: auto 1fr auto; align-items:center; gap:12px;
-  padding:10px 10px 12px 14px; margin:4px 0; border-radius:14px;
-  background: color-mix(in srgb, var(--line-color, var(--tdc-accent)) 7%, transparent);
-  transition: transform .45s cubic-bezier(.2,.8,.2,1), opacity .45s, background .3s; overflow:hidden; }
-.row::before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:4px; border-radius:4px;
-  background: var(--line-color, var(--tdc-accent)); }
-.row.enter { animation: tdc-in .55s cubic-bezier(.2,.8,.2,1) both; }
-.row.leave { animation: tdc-out .45s ease-in both; pointer-events:none; }
-@keyframes tdc-in { from { opacity:0; transform: translateX(28px) scale(.97); } to { opacity:1; transform:none; } }
-@keyframes tdc-out { to { opacity:0; transform: translateX(-28px); height:0; margin:0; padding-top:0; padding-bottom:0; } }
-.badge { min-width:2.3em; height:2.3em; padding:0 .45em; box-sizing:border-box; display:grid; place-items:center;
-  font-weight:800; font-size:1.05em; letter-spacing:-.02em; background:var(--line-color, var(--tdc-accent));
-  color:var(--line-text, #fff); border-radius:8px; box-shadow: 0 2px 6px color-mix(in srgb, var(--line-color, #000) 35%, transparent); }
-.badge.metro { border-radius:50%; width:2.3em; padding:0; font-size:1.2em; }
-.badge.tram { border-radius:10px 2px 10px 2px; }
-.badge.bus { border-radius:999px; font-size:.95em; }
-.mid { min-width:0; }
-.dest { font-weight:600; color:var(--primary-text-color); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.meta { display:flex; align-items:center; gap:8px; margin-top:3px; font-size:.8em; color:var(--tdc-muted); flex-wrap:wrap; }
-.live { display:inline-flex; align-items:center; gap:5px; color: var(--tdc-early); font-weight:600; }
-.dot { position:relative; width:8px; height:8px; border-radius:50%; background: var(--tdc-early); }
-.dot::after, .dot::before { content:""; position:absolute; inset:0; border-radius:50%; border:2px solid var(--tdc-early);
-  animation: tdc-radar 1.8s cubic-bezier(.2,.6,.4,1) infinite; }
-.dot::before { animation-delay: .9s; }
-@keyframes tdc-radar { from { transform: scale(1); opacity:.9; } to { transform: scale(3.2); opacity:0; } }
-.tt { display:inline-flex; align-items:center; gap:4px; opacity:.75; }
-.tt ha-icon { --mdc-icon-size: 14px; }
-.chip { padding:1px 7px; border-radius:999px; font-weight:700; font-size:.95em; }
-.chip.late { background: color-mix(in srgb, var(--tdc-late) 16%, transparent); color: var(--tdc-late); }
-.chip.early, .chip.ok { background: color-mix(in srgb, var(--tdc-early) 16%, transparent); color: var(--tdc-early); }
-.chip.cx { background: color-mix(in srgb, var(--tdc-late) 16%, transparent); color: var(--tdc-late); }
-.row.canceled .dest { text-decoration: line-through; opacity:.6; }
-.cd { text-align:right; font-variant-numeric: tabular-nums; line-height:1; min-width:3.6em; }
-.cd .big { font-size:1.9em; font-weight:800; color:var(--primary-text-color); transition: color .3s; }
-.cd .unit { font-size:.8em; font-weight:600; color:var(--tdc-muted); margin-left:2px; }
-.cd .small { display:block; font-size:.75em; color:var(--tdc-muted); margin-top:4px; }
-.row.imminent { animation: tdc-pulse 1.2s ease-in-out infinite; }
-.row.imminent .cd .big { color: var(--primary-text-color); }
-.row.gone { display: none; }
-@keyframes tdc-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--line-color, var(--tdc-accent)) 45%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--line-color, var(--tdc-accent)) 0%, transparent);
-        background: color-mix(in srgb, var(--line-color, var(--tdc-accent)) 16%, transparent); } }
-.bar { position:absolute; left:0; right:0; bottom:0; height:3px; background: var(--tdc-divider); }
-.bar > i { display:block; height:100%; width:0; background: linear-gradient(90deg,
-  color-mix(in srgb, var(--line-color, var(--tdc-accent)) 60%, transparent), var(--line-color, var(--tdc-accent)));
-  transition: width 1s linear; position:relative; overflow:hidden; }
-.bar > i::after { content:""; position:absolute; inset:0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
-  transform: translateX(-100%); animation: tdc-shine 2.2s ease-in-out infinite; }
-@keyframes tdc-shine { to { transform: translateX(100%); } }
-.empty { padding: 18px; text-align:center; color: var(--tdc-muted); }
-.ticker { display:flex; align-items:center; gap:10px; border-top:1px solid var(--tdc-divider);
-  padding:8px 0 8px 12px; font-size:.85em; color:var(--primary-text-color); overflow:hidden;
-  background: color-mix(in srgb, var(--warning-color, #ffa600) 8%, transparent); }
-.ticker .lbl { flex:none; display:flex; align-items:center; gap:4px; color: var(--warning-color, #ffa600); font-weight:700; }
-.ticker .lbl ha-icon { --mdc-icon-size: 18px; animation: tdc-blink 2s ease-in-out infinite; }
-@keyframes tdc-blink { 50% { opacity:.35; } }
-.marquee { overflow:hidden; flex:1; mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
-.marquee .track { display:inline-flex; white-space:nowrap; animation: tdc-marquee var(--dur, 30s) linear infinite; }
-.marquee .track span { padding-right: 3em; }
-.marquee:hover .track { animation-play-state: paused; }
-@keyframes tdc-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-.row.tap { cursor: pointer; }
-.row.tap:hover { background: color-mix(in srgb, var(--line-color, var(--tdc-accent)) 13%, transparent); }
-.row.tap:focus-visible { outline: 2px solid var(--line-color, var(--tdc-accent)); outline-offset: 1px; }
-.filters { display:flex; gap:6px; flex-wrap:wrap; padding: 0 16px 6px; }
-.filters button { font: inherit; font-size:.8em; border:1px solid var(--tdc-divider); background:none; cursor:pointer;
-  color: var(--primary-text-color); border-radius:999px; padding:3px 10px; display:inline-flex; align-items:center; gap:5px; }
-.filters button i { width:9px; height:9px; border-radius:3px; background: var(--c, var(--tdc-accent)); }
-.filters button.on { background: color-mix(in srgb, var(--c, var(--tdc-accent)) 20%, transparent);
-  border-color: var(--c, var(--tdc-accent)); font-weight:700; }
-.filters .sep { width:1px; background: var(--tdc-divider); margin: 2px 2px; }
-/* compact layout */
-ha-card.compact .header { padding: 10px 12px 4px; }
-ha-card.compact .header .icon { width:30px; height:30px; border-radius:9px; }
-ha-card.compact .header .title { font-size:1.05em; }
-ha-card.compact .row { padding:5px 8px 6px 12px; margin:2px 0; gap:10px; border-radius:10px; }
-ha-card.compact .badge { min-width:1.9em; height:1.9em; font-size:.9em; }
-ha-card.compact .badge.metro { width:1.9em; font-size:1em; }
-ha-card.compact .meta { display:none; }
-ha-card.compact .dest { font-size:.95em; }
-ha-card.compact .cd .big { font-size:1.3em; }
-ha-card.compact .cd .small { display:none; }
-ha-card.compact .row.rt .dest::after { content:""; display:inline-block; width:6px; height:6px; border-radius:50%;
-  background: var(--tdc-early); margin-left:6px; vertical-align: middle; }
-ha-card.compact .row.late .dest::after { background: var(--tdc-late); }
-/* board layout: station departure board */
-ha-card.board { background: #0b0f14; color: #ffd24a; --primary-text-color: #ffd24a; --tdc-muted: #b8a35a;
-  --tdc-divider: rgba(255,210,74,.18); font-family: "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace; }
-ha-card.board .header .icon { background: rgba(255,210,74,.14); color:#ffd24a; }
-ha-card.board .header .title { color:#ffd24a; text-transform: uppercase; letter-spacing:.06em; }
-ha-card.board .bhead { display:grid; grid-template-columns: 3.4em 1fr 4.2em 5.4em; gap:10px; padding: 4px 18px;
-  font-size:.7em; text-transform: uppercase; letter-spacing:.12em; color:#b8a35a; border-bottom:1px solid rgba(255,210,74,.18); }
-ha-card.board .list { padding: 2px 8px 8px; }
-ha-card.board .row { grid-template-columns: 3.4em 1fr 4.2em 5.4em; border-radius:0; margin:0; padding:9px 10px;
-  background: none; border-bottom:1px dashed rgba(255,210,74,.14); }
-ha-card.board .row:nth-child(even) { background: rgba(255,255,255,.025); }
-ha-card.board .row::before { display:none; }
-ha-card.board .badge { box-shadow:none; }
-ha-card.board .dest { color:#ffd24a; text-transform: uppercase; letter-spacing:.04em; }
-ha-card.board .mid .meta { display:none; }
-ha-card.board .cd { text-align:right; }
-ha-card.board .cd .big { color:#ffd24a; font-size:1.25em; }
-ha-card.board .cd .small { display:none; }
-ha-card.board .binfo { font-size:.75em; text-align:right; color:#b8a35a; text-transform: uppercase; }
-ha-card.board .binfo .late, ha-card.board .binfo .cx { color:#ff6b5a; font-weight:700; }
-ha-card.board .binfo .ok { color:#7ee081; }
-ha-card.board .row.imminent .cd .big { animation: tdc-blink 1s steps(2) infinite; }
-ha-card.board .bar { display:none; }
-ha-card.board .ticker { background: rgba(255,210,74,.08); color:#ffd24a; }
-.binfo { display:none; }
-ha-card.board .binfo { display:block; }
-/* trip dialog */
-.dlg { position:fixed; inset:0; z-index:9; display:grid; place-items:center; background: rgba(0,0,0,.45);
-  animation: tdc-fade .2s ease-out; font-family: var(--paper-font-body1_-_font-family, inherit); }
-@keyframes tdc-fade { from { opacity:0; } }
-.dlg .box { width:min(440px, calc(100vw - 24px)); max-height:min(80vh, 720px); display:flex; flex-direction:column;
-  background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius:18px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow:hidden; animation: tdc-pop .25s cubic-bezier(.2,.8,.2,1); }
-@keyframes tdc-pop { from { transform: translateY(16px) scale(.97); opacity:0; } }
-.dlg .dh { display:flex; align-items:center; gap:12px; padding:14px 14px 12px 16px;
-  background: color-mix(in srgb, var(--line-color, var(--tdc-accent)) 14%, transparent); }
-.dlg .dh .t { flex:1; min-width:0; }
-.dlg .dh .h1 { font-weight:700; font-size:1.1em; }
-.dlg .dh .h2 { font-size:.8em; color: var(--secondary-text-color, #727272); }
-.dlg .x { border:none; background:none; color:inherit; cursor:pointer; font-size:1.5em; line-height:1; padding:4px 8px; border-radius:8px; }
-.dlg .x:hover { background: rgba(127,127,127,.15); }
-.dlg .body { overflow:auto; padding: 8px 12px 14px 12px; }
-.dlg .msg { padding: 24px; text-align:center; color: var(--secondary-text-color, #727272); }
-.dlg ol { list-style:none; margin:0; padding:0; position:relative; }
-.dlg li { display:grid; grid-template-columns: 3.4em 22px 1fr auto; align-items:center; gap:8px; min-height:34px;
-  position:relative; font-size:.92em; }
-.dlg li .tm { text-align:right; font-variant-numeric: tabular-nums; font-weight:600; }
-.dlg li .tm s { display:block; font-weight:400; font-size:.8em; color: var(--secondary-text-color, #727272); }
-.dlg li .rail { position:relative; align-self:stretch; }
-.dlg li .rail::before { content:""; position:absolute; left:9px; top:0; bottom:0; width:4px;
-  background: var(--line-color, var(--tdc-accent)); }
-.dlg li:first-child .rail::before { top:50%; } .dlg li:last-child .rail::before { bottom:50%; }
-.dlg li .rail::after { content:""; position:absolute; left:5px; top:50%; width:12px; height:12px; margin-top:-6px;
-  border-radius:50%; background: var(--card-background-color, #fff); border:3px solid var(--line-color, var(--tdc-accent)); box-sizing:border-box; }
-.dlg li.past { opacity:.45; }
-.dlg li.sel { font-weight:700; }
-.dlg li.sel .rail::after { width:18px; height:18px; left:2px; margin-top:-9px; background: var(--line-color, var(--tdc-accent)); }
-.dlg li.next .rail::after { box-shadow: 0 0 0 4px color-mix(in srgb, var(--line-color, var(--tdc-accent)) 30%, transparent);
-  animation: tdc-pulse2 1.4s ease-in-out infinite; }
-@keyframes tdc-pulse2 { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--line-color, var(--tdc-accent)) 0%, transparent); } }
-.dlg li.skip .nm { text-decoration: line-through; }
-.dlg li .ch { font-size:.8em; }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-  .marquee .track { white-space: normal; display:block; } .marquee .track span + span { display:none; }
+  /* status — tuned for ≥ 4.5:1 on the card surface (HA's --success-color is 2.8:1 on white) */
+  --tc-live: var(--tisseo-live-color, #16803c);
+  --tc-late: var(--tisseo-late-color, #9a5b00);
+  --tc-early: var(--tisseo-early-color, #1565c0);
+  --tc-cancel: var(--tisseo-cancel-color, #c21e1e);
+  --tc-sev-info: var(--tisseo-info-color, #1565c0);
+  --tc-sev-warning: var(--tisseo-warning-color, #9a5b00);
+  --tc-sev-severe: var(--tisseo-severe-color, #c21e1e);
+  --tc-badge-ring: rgba(0, 0, 0, 0.14);
+
+  /* type — HA variables first, px fallback */
+  --tc-font: var(--ha-font-family-body, Roboto, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --tc-fs-meta: var(--ha-font-size-s, 12px);
+  --tc-fs-body: var(--ha-font-size-m, 14px);
+  --tc-fs-dest: var(--ha-font-size-l, 16px);
+  --tc-fs-title: 18px;
+  --tc-fs-time: 24px;
+  --tc-fs-hero-dest: 20px;
+  --tc-fs-hero-time: 44px;
+
+  /* space (4 px grid) & shape */
+  --tc-s1: 4px; --tc-s2: 8px; --tc-s3: 12px; --tc-s4: 16px; --tc-s5: 20px; --tc-s6: 24px;
+  --tc-radius: var(--ha-card-border-radius, 12px);
+  --tc-radius-s: 8px;
+  --tc-target: 44px;
+
+  /* motion */
+  --tc-ease: cubic-bezier(0.2, 0, 0, 1);        /* enter / standard */
+  --tc-ease-exit: cubic-bezier(0.3, 0, 1, 1);   /* leave */
+  --tc-d1: 120ms;  /* press, hover */
+  --tc-d2: 200ms;  /* row enter/leave, digit tick */
+  --tc-d3: 280ms;  /* reorder, expand */
+  --tc-d4: 360ms;  /* dialog */
+
+  container: tc / inline-size;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--tc-surface);
+  color: var(--tc-text);
+  font-family: var(--tc-font);
+  font-size: var(--tc-fs-body);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
 }
+.tc[data-theme="dark"] {
+  --tc-live: var(--tisseo-live-color, #5fd07a);
+  --tc-late: var(--tisseo-late-color, #ffb547);
+  --tc-early: var(--tisseo-early-color, #8ab8ff);
+  --tc-cancel: var(--tisseo-cancel-color, #ff8a80);
+  --tc-sev-info: var(--tisseo-info-color, #8ab8ff);
+  --tc-sev-warning: var(--tisseo-warning-color, #ffb547);
+  --tc-sev-severe: var(--tisseo-severe-color, #ff8a80);
+  --tc-badge-ring: rgba(255, 255, 255, 0.22);
+  --tc-hover: rgba(255, 255, 255, 0.06);
+}
+:host { display: block; height: 100%; } /* fills a panel view; resolves to auto in masonry */
+.tc *, .tc *::before, .tc *::after { box-sizing: border-box; }
+.tc [hidden], .tc[hidden] { display: none !important; } /* component display rules must not beat the hidden attribute */
+.tc button { font: inherit; color: inherit; }
+.tc :focus-visible { outline: 2px solid var(--tc-accent); outline-offset: 2px; border-radius: var(--tc-radius-s); }
+.tc-num { font-variant-numeric: tabular-nums; }
+
+/* ---------- 2. Line badge ------------------------------------------------- */
+/* --line / --line-text come from badgeColors() (text colour auto-corrected to AA) */
+.tc-badge {
+  --_h: 32px; --_fs: 14px; --_px: 0px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  flex: none; height: var(--_h); min-width: var(--_h); padding: 0 var(--_px);
+  background: var(--line, #757575); color: var(--line-text, #fff);
+  box-shadow: inset 0 0 0 1px var(--tc-badge-ring);
+  font: 700 var(--_fs)/1 var(--tc-font); letter-spacing: -0.01em; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tc-badge svg { width: 0.95em; height: 0.95em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.tc-badge--metro   { border-radius: 50%; width: var(--_h); }                       /* circle */
+.tc-badge--tram    { border-radius: 28%; --_px: 4px; }                              /* rounded square */
+.tc-badge--lineo   { border-radius: 999px; --_px: 10px; --_h: 28px; }               /* pill */
+.tc-badge--bus     { border-radius: 6px; --_px: 8px; --_h: 28px; }                  /* rectangle */
+.tc-badge--shuttle { border-radius: 6px; --_px: 7px; --_h: 28px; }                  /* rectangle + plane */
+.tc-badge--cable   { border-radius: 8px 8px 50% 50% / 8px 8px 30% 30%; --_px: 6px; } /* cabin */
+.tc-badge--xs { --_h: 20px; --_fs: 11px; }
+.tc-badge--xs.tc-badge--lineo, .tc-badge--xs.tc-badge--bus, .tc-badge--xs.tc-badge--shuttle { --_h: 18px; --_px: 6px; }
+.tc-badge--l  { --_h: 44px; --_fs: 19px; }
+.tc-badge--l.tc-badge--lineo, .tc-badge--l.tc-badge--bus, .tc-badge--l.tc-badge--shuttle { --_h: 38px; --_px: 13px; }
+.tc-badge--xl { --_h: clamp(40px, 5.2cqi, 64px); --_fs: clamp(17px, 2.3cqi, 28px); }
+.tc-badge--xl.tc-badge--lineo, .tc-badge--xl.tc-badge--bus, .tc-badge--xl.tc-badge--shuttle { --_h: clamp(34px, 4.4cqi, 54px); --_px: clamp(10px, 1.3cqi, 16px); }
+
+/* ---------- 3. Status glyphs --------------------------------------------- */
+.tc-live { width: 14px; height: 14px; flex: none; color: var(--tc-live); overflow: visible; }
+.tc-live circle { fill: currentColor; }
+.tc-live path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.tc-live--anim .a1 { animation: tc-arc 2.4s var(--tc-ease) infinite; }
+.tc-live--anim .a2 { animation: tc-arc 2.4s var(--tc-ease) 0.3s infinite; }
+.tc-ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tc-ico--s { width: 14px; height: 14px; stroke-width: 2; }
+
+.tc-delay { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; font-size: var(--tc-fs-meta); font-weight: 600; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tc-delay--late  { color: var(--tc-late);  background: rgba(154, 91, 0, 0.1);  background: color-mix(in srgb, var(--tc-late) 12%, transparent); }
+.tc-delay--early { color: var(--tc-early); background: rgba(21, 101, 192, 0.1); background: color-mix(in srgb, var(--tc-early) 12%, transparent); }
+.tc-cancel { color: var(--tc-cancel); font-weight: 600; }
+
+/* ---------- 4. Header ----------------------------------------------------- */
+.tc-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--tc-s3); padding: var(--tc-s4) var(--tc-s2) var(--tc-s2) var(--tc-s4); }
+.tc-head__icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--tc-accent); background: var(--tc-raised); background: color-mix(in srgb, var(--tc-accent) 14%, var(--tc-surface)); }
+.tc-head__icon .tc-ico { width: 22px; height: 22px; }
+.tc-head__title { margin: 0; font-size: var(--tc-fs-title); line-height: 24px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-head__sub { margin: 2px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--tc-fs-meta); line-height: 16px; color: var(--tc-text-2); }
+.tc-head__sub .tc-ico--s { color: var(--tc-text-2); }
+.tc-head__clock { font-size: var(--tc-fs-dest); font-weight: 500; color: var(--tc-text-2); font-variant-numeric: tabular-nums; padding-right: var(--tc-s2); }
+.tc-iconbtn { position: relative; width: var(--tc-target); height: var(--tc-target); display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--tc-text-2); cursor: pointer; transition: background var(--tc-d1) var(--tc-ease); }
+.tc-iconbtn:hover { background: var(--tc-hover); }
+.tc-iconbtn__count { position: absolute; top: 6px; right: 5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--tc-accent); color: var(--text-primary-color, #fff); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+
+/* ---------- 5. Filter chips (one scrolling row, never wraps) -------------- */
+.tc-chips { display: flex; gap: var(--tc-s2); overflow-x: auto; padding: 2px var(--tc-s4) var(--tc-s2); scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+.tc-chips::-webkit-scrollbar { display: none; }
+.tc-chip { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 1px solid var(--tc-divider); border-radius: 16px; background: transparent; font-size: 13px; font-weight: 500; cursor: pointer; transition: background var(--tc-d1) var(--tc-ease); }
+.tc-chip::before { content: ""; position: absolute; inset: -6px 0; } /* 44 px tall hit area */
+.tc-chip--text { padding: 0 12px; }
+.tc-chip[aria-pressed="true"] { border-color: transparent; background: var(--tc-raised); background: color-mix(in srgb, var(--tc-accent) 18%, var(--tc-surface)); }
+
+/* ---------- 6. Notices (feed down, stale, timetable change) -------------- */
+.tc-notice { --_c: var(--tc-sev-info); display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: var(--tc-s2) 10px; margin: 0 var(--tc-s3) var(--tc-s2); padding: 10px var(--tc-s3); border-radius: var(--tc-radius-s); background: var(--tc-raised); background: color-mix(in srgb, var(--_c) 10%, var(--tc-surface)); font-size: 13px; line-height: 18px; }
+.tc-notice > .tc-ico { color: var(--_c); margin-top: 0; }
+.tc-notice b { font-weight: 600; }
+.tc-notice__sub { display: block; color: var(--tc-text-2); }
+.tc-notice--warning { --_c: var(--tc-sev-warning); }
+.tc-notice--severe  { --_c: var(--tc-sev-severe); }
+.tc-textbtn { border: 0; background: none; padding: 0 var(--tc-s1); min-height: 32px; color: var(--tc-accent); font-weight: 600; font-size: 13px; cursor: pointer; border-radius: 6px; }
+
+/* ---------- 7. Hero: next catchable departure ----------------------------- */
+.tc-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "eyebrow eyebrow eyebrow" "badge main time"; align-items: center; gap: 6px 14px; width: calc(100% - 2 * var(--tc-s3)); margin: var(--tc-s1) var(--tc-s3) var(--tc-s2); padding: var(--tc-s3) var(--tc-s4) 14px; border: 0; border-radius: calc(var(--tc-radius) - 2px); background: var(--tc-raised); background: color-mix(in srgb, var(--line) 13%, var(--tc-surface)); text-align: left; cursor: pointer; }
+.tc[data-theme="dark"] .tc-hero { background: color-mix(in srgb, var(--line) 18%, var(--tc-surface)); }
+.tc-hero__eyebrow { grid-area: eyebrow; display: flex; align-items: center; gap: 6px; font-size: var(--tc-fs-meta); font-weight: 500; letter-spacing: 0.02em; color: var(--tc-text-2); }
+.tc-hero .tc-badge { grid-area: badge; }
+.tc-hero__main { grid-area: main; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tc-hero__dest { font-size: var(--tc-fs-hero-dest); line-height: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-hero__meta { font-size: 13px; color: var(--tc-text-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.tc-hero .tc-time { grid-area: time; }
+.tc-hero .tc-time__num { font-size: var(--tc-fs-hero-time); letter-spacing: -0.02em; }
+.tc-hero .tc-time__unit { font-size: 16px; }
+.tc-hero .tc-time.is-due .tc-time__num { font-size: 26px; }
+
+/* ---------- 8. Departure rows -------------------------------------------- */
+.tc-list { list-style: none; margin: 0; padding: 0 var(--tc-s1) var(--tc-s2); }
+.tc-row { display: grid; grid-template-rows: 1fr; position: relative; }
+.tc-row + .tc-row::before { content: ""; position: absolute; top: 0; left: 68px; right: var(--tc-s3); height: 1px; background: var(--tc-divider); }
+.tc-row__hit { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: var(--tc-s3); width: 100%; min-height: 60px; padding: var(--tc-s2) var(--tc-s3) var(--tc-s2) var(--tc-s2); border: 0; border-radius: var(--tc-radius-s); background: transparent; text-align: left; cursor: pointer; overflow: hidden; transition: background var(--tc-d1) var(--tc-ease); }
+.tc-row__hit:hover { background: var(--tc-hover); }
+.tc-row__hit > .tc-badge { justify-self: center; }
+.tc-row__main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tc-row__dest { font-size: var(--tc-fs-dest); line-height: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-row__meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; line-height: 18px; color: var(--tc-text-2); font-variant-numeric: tabular-nums; }
+.tc-row__dest .tc-ico, .tc-flag { width: 14px; height: 14px; margin-left: 4px; vertical-align: -1px; color: var(--tc-sev-warning); }
+.tc-flag--severe { color: var(--tc-sev-severe); }
+.tc-row.is-canceled .tc-row__dest { text-decoration: line-through; text-decoration-thickness: 1.5px; color: var(--tc-text-2); }
+
+.tc-time { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tc-time .tc-live { align-self: center; margin-right: 4px; }
+.tc-time__num { font-size: var(--tc-fs-time); line-height: 1; font-weight: 700; display: inline-block; }
+.tc-time__unit { font-size: 13px; font-weight: 500; color: var(--tc-text-2); }
+.tc-time.is-due .tc-time__num { font-size: 15px; letter-spacing: 0.01em; }
+.tc-time--canceled { align-items: center; gap: 4px; font-size: 13px; color: var(--tc-cancel); font-weight: 600; }
+/* stale data: countdowns keep running client-side but read as approximate */
+.tc.is-stale .tc-time__num, .tc.is-stale .tc-brow__time { color: var(--tc-text-2); }
+.tc.is-stale .tc-live { color: var(--tc-text-2); }
+/* feed down: live glyphs are simply not rendered; rows fall back to timetable */
+.tc-then { font-size: 13px; color: var(--tc-text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- 9. Alerts: collapsed banner + expandable list ----------------- */
+.tc-alert { --_c: var(--tc-sev-info); display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 18px; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 10px var(--tc-s4); border: 0; border-top: 1px solid var(--tc-divider); background: transparent; text-align: left; font-size: 13px; line-height: 18px; cursor: pointer; }
+.tc-alert:hover { background: var(--tc-hover); }
+.tc-alert > .tc-ico:first-child { color: var(--_c); }
+.tc-alert__text { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tc-alert__text > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-alert__count { padding: 0 7px; height: 20px; border-radius: 10px; background: var(--tc-raised); font-size: var(--tc-fs-meta); font-weight: 600; line-height: 20px; color: var(--tc-text-2); }
+.tc-alert__chev { color: var(--tc-text-2); transition: transform var(--tc-d3) var(--tc-ease); }
+.tc-alert[aria-expanded="true"] .tc-alert__chev { transform: rotate(180deg); }
+.tc-alert--warning { --_c: var(--tc-sev-warning); }
+.tc-alert--severe  { --_c: var(--tc-sev-severe); background: rgba(194, 30, 30, 0.06); background: color-mix(in srgb, var(--tc-sev-severe) 9%, transparent); font-weight: 500; }
+.tc-alerts__list { list-style: none; margin: 0; padding: 0 var(--tc-s4) var(--tc-s3); display: grid; gap: var(--tc-s3); }
+.tc-alerts__item { --_c: var(--tc-sev-info); display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; }
+.tc-alerts__item > .tc-ico { color: var(--_c); grid-row: span 2; margin-top: 1px; }
+.tc-alerts__item--warning { --_c: var(--tc-sev-warning); }
+.tc-alerts__item--severe  { --_c: var(--tc-sev-severe); }
+.tc-alerts__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--tc-fs-body); font-weight: 500; line-height: 20px; }
+.tc-alerts__desc { font-size: 13px; line-height: 18px; color: var(--tc-text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tc-alerts__group { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tc-text-2); padding-top: var(--tc-s1); }
+
+.tc-foot { display: flex; align-items: center; gap: 6px; padding: 0 var(--tc-s4) var(--tc-s3); font-size: var(--tc-fs-meta); color: var(--tc-text-2); }
+
+/* ---------- 10. Empty / error / loading ---------------------------------- */
+.tc-empty { display: grid; justify-items: center; gap: 6px; padding: var(--tc-s5) var(--tc-s6) var(--tc-s6); text-align: center; }
+.tc-empty__icon { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--tc-raised); color: var(--tc-text-2); margin-bottom: var(--tc-s1); }
+.tc-empty__icon .tc-ico { width: 24px; height: 24px; }
+.tc-empty__title { margin: 0; font-size: var(--tc-fs-dest); font-weight: 500; }
+.tc-empty__text { margin: 0; font-size: 13px; color: var(--tc-text-2); display: flex; align-items: center; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.tc-empty--error .tc-empty__icon { color: var(--tc-cancel); background: color-mix(in srgb, var(--tc-cancel) 12%, var(--tc-surface)); }
+.tc-skel { display: block; height: 14px; border-radius: 6px; background: var(--tc-raised); background-image: linear-gradient(90deg, transparent, rgba(127, 127, 127, 0.12), transparent); background-size: 200% 100%; animation: tc-shimmer 1.4s linear infinite; }
+.tc-skel--badge { width: 32px; height: 32px; border-radius: 50%; }
+.tc-skel--num { width: 36px; height: 24px; }
+
+/* ---------- 11. Compact layout ------------------------------------------- */
+.tc[data-layout="compact"] .tc-head { padding: var(--tc-s3) var(--tc-s1) var(--tc-s1) var(--tc-s3); gap: 10px; }
+.tc[data-layout="compact"] .tc-head__icon { width: 32px; height: 32px; border-radius: 10px; }
+.tc[data-layout="compact"] .tc-head__icon .tc-ico { width: 18px; height: 18px; }
+.tc[data-layout="compact"] .tc-head__title { font-size: var(--tc-fs-dest); line-height: 20px; }
+.tc[data-layout="compact"] .tc-row + .tc-row::before { left: 56px; }
+.tc[data-layout="compact"] .tc-row__hit { grid-template-columns: 40px minmax(0, 1fr) auto auto; gap: 10px; min-height: 44px; padding: 4px var(--tc-s3) 4px 6px; }
+.tc[data-layout="compact"] .tc-row__dest { font-size: 15px; }
+.tc[data-layout="compact"] .tc-row__meta { display: none; }
+.tc[data-layout="compact"] .tc-badge { --_h: 26px; --_fs: 12px; }
+.tc[data-layout="compact"] .tc-badge--lineo, .tc[data-layout="compact"] .tc-badge--bus, .tc[data-layout="compact"] .tc-badge--shuttle { --_h: 22px; --_px: 7px; }
+.tc[data-layout="compact"] .tc-time__num { font-size: 18px; }
+.tc[data-layout="compact"] .tc-time__unit { font-size: 12px; }
+.tc[data-layout="compact"] .tc-then { min-width: 3.2em; text-align: right; }
+.tc[data-layout="compact"] .tc-alert { min-height: 44px; padding: 8px var(--tc-s3); }
+@container tc (max-width: 300px) {
+  .tc-then, .tc-head__icon, .tc-head__sub, .tc-alert__text > span:last-child { display: none; }
+  .tc[data-layout="compact"] .tc-row__hit { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .tc-alert { grid-template-columns: 18px auto 1fr 18px; }
+}
+@container tc (min-width: 560px) {
+  .tc[data-layout="default"] .tc-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--tc-s4); }
+  .tc[data-layout="default"] .tc-row + .tc-row::before { display: none; }
+}
+
+/* ---------- 12. Board layout (wall tablet) ------------------------------- */
+.tc[data-layout="board"] { height: 100%; }
+.tc[data-layout="board"][data-board-theme="dark"] {
+  --tc-surface: var(--tisseo-board-background, #0b1220);
+  --tc-raised: #141d2e;
+  --tc-text: #ffffff;
+  --tc-text-2: #93a0b4;
+  --tc-divider: rgba(255, 255, 255, 0.1);
+  --tc-badge-ring: rgba(255, 255, 255, 0.22);
+  --tc-live: #5fd07a; --tc-late: #ffb547; --tc-early: #8ab8ff; --tc-cancel: #ff8a80;
+  --tc-sev-info: #8ab8ff; --tc-sev-warning: #ffb547; --tc-sev-severe: #ff8a80;
+  --tc-board-time: var(--tisseo-board-time-color, #ffb800);
+}
+.tc-board__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 2cqi; padding: clamp(14px, 2.4cqi, 32px) clamp(16px, 3cqi, 40px) clamp(10px, 1.6cqi, 20px); }
+.tc-board__title { margin: 0; font-size: clamp(22px, 3.6cqi, 48px); font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; }
+.tc-board__sub { margin: 4px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: clamp(13px, 1.5cqi, 19px); color: var(--tc-text-2); }
+.tc-board__sub .tc-live { width: 1em; height: 1em; }
+.tc-board__clock { font-size: clamp(24px, 3.8cqi, 52px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.tc-board__cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 3cqi; padding: 0 clamp(16px, 3cqi, 40px); flex: 1; align-content: start; }
+@container tc (min-width: 880px) { .tc-board__cols--split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.tc-board__panel { min-width: 0; }
+.tc-board__panel-title { display: flex; align-items: center; gap: 8px; margin: clamp(6px, 1cqi, 14px) 0 0; padding-bottom: 6px; font-size: clamp(11px, 1.1cqi, 14px); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tc-text-2); }
+.tc-bhead, .tc-brow { display: grid; grid-template-columns: clamp(48px, 6.4cqi, 88px) minmax(0, 1fr) clamp(64px, 8cqi, 116px) clamp(64px, 7cqi, 104px); align-items: center; column-gap: clamp(10px, 1.4cqi, 20px); }
+.tc-bhead { padding: 6px 0; border-bottom: 1px solid var(--tc-divider); font-size: clamp(11px, 1.05cqi, 14px); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tc-text-2); }
+.tc-bhead > :nth-child(n + 3) { text-align: right; }
+.tc-brow { min-height: clamp(56px, 7.2cqi, 100px); padding: 6px 0; border-bottom: 1px solid var(--tc-divider); }
+.tc-brow > .tc-badge { justify-self: start; }
+/* Destination is the most important word on a board: it wraps to 2 lines before it is ever truncated */
+.tc-brow__dest { min-width: 0; font-size: clamp(18px, 2.4cqi, 34px); font-weight: 600; line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.tc-brow__note { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: clamp(12px, 1.3cqi, 17px); font-weight: 500; color: var(--tc-text-2); }
+.tc-brow__time { display: flex; align-items: baseline; justify-content: flex-end; gap: 4px; color: var(--tc-board-time, var(--tc-text)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc-brow__time .tc-live { align-self: center; width: 0.42em; height: 0.42em; margin-right: 0.12em; font-size: clamp(24px, 4cqi, 56px); }
+.tc-brow__time b { font-size: clamp(24px, 4cqi, 56px); font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.tc-brow__time small { font-size: clamp(12px, 1.5cqi, 20px); font-weight: 500; color: var(--tc-text-2); }
+.tc-brow__time--due b, .tc-brow__time.is-due b { font-size: clamp(16px, 2.2cqi, 30px); letter-spacing: 0.02em; }
+.tc-brow__time--canceled { color: var(--tc-cancel); font-size: clamp(14px, 1.8cqi, 24px); font-weight: 700; align-items: center; }
+.tc-brow__then { text-align: right; font-size: clamp(15px, 2cqi, 28px); font-weight: 500; color: var(--tc-text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc-board__foot { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-top: auto; padding: clamp(10px, 1.6cqi, 20px) clamp(16px, 3cqi, 40px); border-top: 1px solid var(--tc-divider); background: var(--tc-raised); font-size: clamp(14px, 1.6cqi, 21px); }
+.tc-board__foot .tc-ico { width: 1.2em; height: 1.2em; }
+.tc-board__msg { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tc-board__msg > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-pager { display: flex; align-items: center; gap: 6px; color: var(--tc-text-2); font-size: 0.8em; font-variant-numeric: tabular-nums; }
+.tc-pager i { width: 6px; height: 6px; border-radius: 50%; background: var(--tc-divider); }
+.tc-pager i.on { background: var(--tc-text-2); }
+
+/* ---------- 13. Trip-stops dialog (native <dialog>, top layer) ---------- */
+.tc-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 48px)); padding: 0; border: 0; border-radius: var(--ha-dialog-border-radius, 24px); background: var(--tc-surface); color: var(--tc-text); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28); overflow: hidden; display: flex; flex-direction: column; }
+.tc-dialog::backdrop { background: rgba(0, 0, 0, 0.32); }
+.tc-dialog[open] { animation: tc-dialog-in var(--tc-d4) var(--tc-ease); }
+.tc-dlg__head { display: grid; grid-template-columns: auto minmax(0, 1fr) var(--tc-target); align-items: center; gap: var(--tc-s3); padding: var(--tc-s4) var(--tc-s2) var(--tc-s3) var(--tc-s5); border-bottom: 1px solid var(--tc-divider); }
+.tc-dlg__title { margin: 0; font-size: var(--tc-fs-title); font-weight: 600; line-height: 24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-dlg__sub { margin: 2px 0 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--tc-text-2); }
+.tc-dlg__body { overflow-y: auto; padding: var(--tc-s2) 0 var(--tc-s3); }
+.tc-stops { list-style: none; margin: 0; padding: 0 var(--tc-s4) 0 var(--tc-s3); }
+.tc-stop { position: relative; display: grid; grid-template-columns: 52px 24px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; min-height: 40px; font-size: var(--tc-fs-body); }
+.tc-stop__time { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+.tc-stop__time s { display: block; font-size: 11px; font-weight: 400; color: var(--tc-text-2); line-height: 1; }
+.tc-stop__rail { position: relative; align-self: stretch; }
+.tc-stop__rail::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 4px; transform: translateX(-50%); background: var(--line-ink, var(--line)); }
+.tc-stop:first-child .tc-stop__rail::before { top: 50%; }
+.tc-stop:last-child .tc-stop__rail::before { bottom: 50%; }
+.tc-stop__rail::after { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--tc-surface); box-shadow: inset 0 0 0 3px var(--line-ink, var(--line)); }
+.tc-stop__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-stop--here { min-height: 56px; }
+.tc-stop--here .tc-stop__rail::after { width: 20px; height: 20px; background: var(--line); box-shadow: 0 0 0 3px var(--tc-surface), 0 0 0 5px var(--line-ink, var(--line)); }
+.tc-stop--here .tc-stop__name { font-weight: 600; }
+.tc-stop--here .tc-stop__eyebrow { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tc-text-2); line-height: 14px; }
+.tc-stop--end .tc-stop__rail::after { border-radius: 3px; }
+.tc-stop--end .tc-stop__name { font-weight: 600; }
+.tc-stop--past .tc-stop__rail::before { background: repeating-linear-gradient(var(--line-ink, var(--line)) 0 4px, transparent 4px 8px); opacity: 0.6; }
+.tc-stops__more { display: grid; grid-template-columns: 52px 24px minmax(0, 1fr); column-gap: 8px; align-items: center; width: 100%; min-height: 40px; border: 0; background: none; padding: 0; text-align: left; color: var(--tc-text-2); font-size: 13px; cursor: pointer; }
+.tc-stops__more .tc-stop__rail::before { background: repeating-linear-gradient(var(--line-ink, var(--line)) 0 4px, transparent 4px 8px); opacity: 0.6; top: 50%; }
+.tc-dlg__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px var(--tc-s5); border-top: 1px solid var(--tc-divider); font-size: var(--tc-fs-meta); color: var(--tc-text-2); }
+
+/* ---------- 14. Leave-now hero (card or section) ------------------------- */
+.tc-leave { display: grid; gap: 10px; padding: var(--tc-s4) var(--tc-s5) var(--tc-s5); }
+.tc-leave__eyebrow { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--tc-text-2); }
+.tc-leave__big { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0; font-size: 22px; font-weight: 500; line-height: 1.1; }
+.tc-leave__big b { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tc-leave__target { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: var(--tc-fs-dest); }
+.tc-leave__target strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-leave__meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--tc-text-2); font-variant-numeric: tabular-nums; }
+.tc-progress { height: 6px; border-radius: 3px; background: var(--tc-raised); overflow: hidden; }
+.tc-progress > i { display: block; height: 100%; width: var(--p, 50%); border-radius: inherit; background: var(--line-ink, var(--tc-accent)); transition: width 1s linear; }
+.tc-leave--now { background: var(--line); color: var(--line-text); }
+.tc-leave--now .tc-leave__eyebrow, .tc-leave--now .tc-leave__meta { color: inherit; opacity: 0.86; }
+.tc-leave--now .tc-badge { box-shadow: inset 0 0 0 2px currentColor; }
+.tc-leave--now .tc-leave__walk { animation: tc-nudge 1s var(--tc-ease) 3; }
+.tc-leave--now .tc-progress { background: rgba(0, 0, 0, 0.14); }
+.tc-leave--now .tc-progress > i { background: currentColor; }
+
+/* ---------- 15. Journey card --------------------------------------------- */
+.tc-jrny { display: grid; gap: var(--tc-s3); padding: 0 var(--tc-s4) var(--tc-s4); }
+.tc-jrny__times { display: grid; grid-template-columns: auto 1fr auto; align-items: end; gap: var(--tc-s3); }
+.tc-jrny__t { display: grid; gap: 2px; }
+.tc-jrny__t small { font-size: var(--tc-fs-meta); color: var(--tc-text-2); font-weight: 500; }
+.tc-jrny__t b { font-size: 28px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tc-jrny__dur { text-align: center; font-size: 13px; color: var(--tc-text-2); padding-bottom: 4px; border-bottom: 2px dotted var(--tc-divider); }
+.tc-legs { display: flex; gap: 3px; height: 30px; }
+.tc-leg { flex: var(--w, 1) 1 0; min-width: 30px; display: flex; align-items: center; justify-content: center; gap: 4px; border-radius: 6px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tc-leg--ride { background: var(--line); color: var(--line-text); box-shadow: inset 0 0 0 1px var(--tc-badge-ring); }
+.tc-leg--walk, .tc-leg--wait { color: var(--tc-text-2); background: var(--tc-raised); font-weight: 600; }
+.tc-leg--wait { background: repeating-linear-gradient(135deg, var(--tc-raised) 0 6px, transparent 6px 10px); }
+.tc-steps { list-style: none; margin: 0; padding: 0; }
+.tc-step { display: grid; grid-template-columns: 44px 24px minmax(0, 1fr); column-gap: 8px; align-items: center; min-height: 36px; font-size: var(--tc-fs-body); }
+.tc-step__time { text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tc-step__rail { position: relative; align-self: stretch; }
+.tc-step__rail::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 4px; transform: translateX(-50%); background: var(--line-ink, var(--tc-divider)); }
+.tc-step--walk .tc-step__rail::before { width: 0; border-left: 3px dotted var(--tc-text-2); background: none; }
+.tc-step:first-child .tc-step__rail::before { top: 50%; }
+.tc-step:last-child .tc-step__rail::before { bottom: 50%; }
+.tc-step__rail::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--tc-surface); box-shadow: inset 0 0 0 3px var(--tc-text-2); }
+.tc-step--stop .tc-step__rail::after { box-shadow: inset 0 0 0 3px var(--line-ink, var(--tc-text)); }
+.tc-step__what { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--tc-text); }
+.tc-step__what span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-step__what em { font-style: normal; color: var(--tc-text-2); font-size: 13px; }
+
+/* ---------- 16. Mini cards (bike, P+R, feed) ----------------------------- */
+.tc-mini { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 2px var(--tc-s3); padding: var(--tc-s3) var(--tc-s4) var(--tc-s4); }
+.tc-mini .tc-head__icon { grid-row: span 2; align-self: start; }
+.tc-mini__name { font-size: var(--tc-fs-body); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-mini__stats { display: flex; align-items: baseline; gap: var(--tc-s4); flex-wrap: wrap; }
+.tc-mini__stat { display: flex; align-items: baseline; gap: 4px; font-size: 13px; color: var(--tc-text-2); }
+.tc-mini__stat b { font-size: 26px; line-height: 1.1; font-weight: 700; color: var(--tc-text); font-variant-numeric: tabular-nums; }
+.tc-mini__bar { grid-column: 1 / -1; margin-top: var(--tc-s2); display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--tc-raised); }
+.tc-mini__bar i { flex: var(--n) 1 0; background: var(--_fill, var(--tc-accent)); }
+.tc-mini__bar i.free { background: transparent; }
+.tc-mini__state { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--tc-fs-meta); font-weight: 600; }
+.tc-mini__state--warn { color: var(--tc-late); }
+.tc-mini__state--full { color: var(--tc-cancel); }
+.tc-mini__state--ok { color: var(--tc-live); }
+
+/* ---------- 17. Motion ----------------------------------------------------- */
+.tc-row.is-entering { animation: tc-in var(--tc-d2) var(--tc-ease) both; }
+.tc-row.is-leaving { animation: tc-out var(--tc-d2) var(--tc-ease-exit) forwards; pointer-events: none; }
+.tc-time__num.is-ticking { animation: tc-tick var(--tc-d2) var(--tc-ease); }
+.tc-row.is-due-now .tc-badge, .tc-hero.is-due-now .tc-badge { animation: tc-pulse 1.6s var(--tc-ease) 3; }
+@keyframes tc-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes tc-out { to { opacity: 0; grid-template-rows: 0fr; transform: translateX(-8px); } }
+@keyframes tc-tick { from { opacity: 0; transform: translateY(-0.3em); } }
+@keyframes tc-pulse { 0% { box-shadow: inset 0 0 0 1px var(--tc-badge-ring), 0 0 0 0 var(--line); } 70%, 100% { box-shadow: inset 0 0 0 1px var(--tc-badge-ring), 0 0 0 9px transparent; } }
+@keyframes tc-arc { 0%, 100% { opacity: 0.35; } 40% { opacity: 1; } }
+@keyframes tc-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes tc-dialog-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
+@keyframes tc-nudge { 0%, 100% { transform: none; } 40% { transform: translateX(3px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tc *, .tc *::before, .tc *::after, .tc-dialog, .tc-dialog * { animation: none !important; transition-duration: 0.01ms !important; }
+}
+@media (prefers-contrast: more) {
+  .tc { --tc-text-2: var(--tc-text); --tc-badge-ring: currentColor; }
+  .tc-badge { box-shadow: inset 0 0 0 2px var(--tc-text); }
+}
+@media (forced-colors: active) {
+  .tc-badge, .tc-leg--ride { forced-color-adjust: none; outline: 1px solid CanvasText; }
+  .tc-live { color: Highlight; }
+  .tc-hero, .tc-notice, .tc-leave--now { border: 1px solid CanvasText; }
+}
+
+/* ---------- 18. Integration additions (tisseo-ha 1.1.0) ------------------- */
+.tc-dialog:not([open]) { display: none; } /* .tc sets display:flex, which would beat the UA rule */
+div.tc-row__hit, div.tc-hero { cursor: default; }
+.tc-brow.is-tap { cursor: pointer; border-radius: var(--tc-radius-s); }
+.tc-brow.is-tap:hover { background: var(--tc-hover); }
+.tc-chip .tc-badge { pointer-events: none; }
+.tc-alerts__link { grid-column: 2; font-size: 13px; color: var(--tc-accent); font-weight: 500; }
+.tc-head > span:empty { width: var(--tc-s2); }
+.tc-stops__wrap { list-style: none; }
+.tc-stop--past .tc-stop__time, .tc-stop--past .tc-stop__name { color: var(--tc-text-2); }
+.tc-dlg__body .tc-empty { gap: 10px; }
+.tc-dlg__body .tc-skel { height: 14px; }
+button.tc-pager { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 `;
 
-function tdcEsc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* ───────── colour & contrast (from the design's tisseo-ui.js) ───────── */
+function hexToRgb(hex) {
+  let h = String(hex || "").replace("#", "").trim();
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
 }
+const toHex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("").toUpperCase();
+function luminance(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  const [r, g, b] = rgb.map((v) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+function mix(a, b, k) { const A = hexToRgb(a), B = hexToRgb(b); return toHex(A.map((v, i) => v * (1 - k) + B[i] * k)); }
+/* GTFS text colour kept when it reaches WCAG AA (4.5:1), else the better of black/white. "brand" keeps GTFS. */
+function badgeColors(color, textColor, mode = "auto") {
+  const bg = hexToRgb(color) ? "#" + String(color).replace("#", "").toUpperCase() : "#757575";
+  const gtfsFg = hexToRgb(textColor) ? "#" + String(textColor).replace("#", "").toUpperCase() : null;
+  if (mode === "brand" && gtfsFg) return { bg, fg: gtfsFg };
+  if (gtfsFg && contrast(bg, gtfsFg) >= 4.5) return { bg, fg: gtfsFg };
+  return { bg, fg: contrast(bg, "#000000") >= contrast(bg, "#FFFFFF") ? "#111111" : "#FFFFFF" };
+}
+/* "Ink" variant of a line colour for thin graphics (rails, bars) so they reach 3:1 on the surface. */
+function inkColor(color, surface, target = 3) {
+  if (!hexToRgb(color)) return color;
+  if (contrast(color, surface) >= target) return color.toUpperCase();
+  const towards = luminance(surface) > 0.5 ? "#000000" : "#FFFFFF";
+  for (let k = 0.05; k <= 1; k += 0.05) { const c = mix(color, towards, k); if (contrast(c, surface) >= target) return c; }
+  return towards;
+}
+/* Shape carries the mode for colour-blind users. */
+function badgeShape(dep) {
+  const mode = String(dep.mode || "").toLowerCase(), line = String(dep.line || "").toUpperCase();
+  if (mode === "metro" || mode === "subway") return "metro";
+  if (mode === "tram") return "tram";
+  if (mode === "cable_car" || mode === "gondola" || line === "TELEO") return "cable";
+  if (line === "AERO" || /navette|shuttle/i.test(dep.line_name || "")) return "shuttle";
+  if (/^L\d{1,2}$/.test(line)) return "lineo";
+  return "bus";
+}
+
+/* ───────── copy (FR / EN) ───────── */
+const STRINGS = {
+  fr: {
+    min: "min", due: "Imminent", dueLong: "Départ imminent", canceled: "Supprimé",
+    live: "Temps réel", scheduled: "Horaire théorique", metroSched: "Métro : horaire théorique",
+    partlyLive: "en partie théorique",
+    metroNoLive: "Tisséo ne publie pas de temps réel pour le métro",
+    tripNoLive: "Pas de temps réel publié pour ce trajet",
+    next: "Prochain départ", then: "puis", walk: (m) => `${m} min à pied`,
+    late: (m) => `+${m} min`, early: (m) => `−${m} min`,
+    lateLong: (m) => `en retard de ${m} min`, earlyLong: (m) => `en avance de ${m} min`,
+    leaveIn: "Partez dans", leaveNow: "Partez maintenant", missed: "Trop juste",
+    noDep: "Aucun départ dans les 3 h", noMatch: "Aucun départ pour ce filtre", showAll: "Tout afficher",
+    feedDown: "Temps réel indisponible", feedDownSub: "Horaires théoriques affichés",
+    stale: (m) => `Données d'il y a ${m} min`, entityMissing: "Arrêt introuvable",
+    ttChange: "Horaires modifiés demain",
+    ttSub: (a) => ttSummary(a, "fr", (t, r, pct) => `${t} départs demain contre ${r} le même jour la semaine suivante (${pct} %)`),
+    disruptions: "Perturbations", filter: "Filtrer", all: "Toutes", more: "Plus d'infos",
+    previousStops: (n) => `${n} arrêts précédents`, youAreHere: "Vous êtes ici", stops: "arrêts",
+    skipped: "non desservi", close: "Fermer", loading: "Chargement…", tripErr: "Détail du trajet indisponible",
+    line: "Ligne", destination: "Direction", departs: "Départ", thenCol: "Puis", metro: "Métro", other: "Bus & tram",
+    in: "dans", at: "à", to: "vers", minutes: (m) => (m === 1 ? "1 minute" : `${m} minutes`),
+  },
+  en: {
+    min: "min", due: "Due", dueLong: "Departing now", canceled: "Canceled",
+    live: "Live", scheduled: "Scheduled", metroSched: "Metro: scheduled",
+    partlyLive: "partly scheduled",
+    metroNoLive: "Tisséo doesn't publish live times for the metro",
+    tripNoLive: "No live data published for this trip",
+    next: "Next departure", then: "then", walk: (m) => `${m} min walk`,
+    late: (m) => `+${m} min`, early: (m) => `−${m} min`,
+    lateLong: (m) => `${m} min late`, earlyLong: (m) => `${m} min early`,
+    leaveIn: "Leave in", leaveNow: "Leave now", missed: "Too tight",
+    noDep: "No departures in the next 3 h", noMatch: "No departures match this filter", showAll: "Show all",
+    feedDown: "Live data unavailable", feedDownSub: "Showing scheduled times",
+    stale: (m) => `Data from ${m} min ago`, entityMissing: "Stop not found",
+    ttChange: "Timetable changes tomorrow",
+    ttSub: (a) => ttSummary(a, "en", (t, r, pct) => `${t} departures tomorrow vs ${r} the same day next week (${pct}%)`),
+    disruptions: "Disruptions", filter: "Filter", all: "All", more: "More info",
+    previousStops: (n) => `${n} earlier stops`, youAreHere: "You are here", stops: "stops",
+    skipped: "skipped", close: "Close", loading: "Loading…", tripErr: "Trip details unavailable",
+    line: "Line", destination: "To", departs: "Departs", thenCol: "Then", metro: "Metro", other: "Bus & tram",
+    in: "in", at: "at", to: "to", minutes: (m) => (m === 1 ? "1 minute" : `${m} minutes`),
+  },
+};
+function ttSummary(a, lang, fmt) {
+  const t = Number(a.tomorrow_departures), r = Number(a.reference_departures);
+  if (!(t >= 0) || !(r > 0)) return "";
+  const pct = Math.round(((t - r) / r) * 100);
+  return fmt(t.toLocaleString(lang), r.toLocaleString(lang), `${pct > 0 ? "+" : pct < 0 ? "−" : ""}${Math.abs(pct)}`);
+}
+const tr = (lang) => STRINGS[String(lang || "en").slice(0, 2)] || STRINGS.en;
+
+/* ───────── countdown & delays ───────── */
+const DELAY_THRESHOLD_S = 90; // below this, GTFS-RT jitter: no chip
+// HA's own time format setting (12 h / 24 h / language / system) is applied by the card on each render.
+const TIMEFMT = { locale: undefined, hour12: undefined };
+const hhmm = (ms) => new Date(ms).toLocaleTimeString(TIMEFMT.locale, { hour: "2-digit", minute: "2-digit", hour12: TIMEFMT.hour12 });
+function formatCountdown(expectedMs, nowMs, lang) {
+  const s = tr(lang), diff = Math.floor((expectedMs - nowMs) / 1000), min = Math.floor(diff / 60);
+  if (diff < 60) return { kind: "due", word: s.due, text: s.due, minutes: 0 };
+  if (min >= 60) { const v = hhmm(expectedMs, lang); return { kind: "clock", num: v, text: v, minutes: min }; }
+  return { kind: "min", num: String(min), unit: s.min, text: `${min} ${s.min}`, minutes: min };
+}
+function delayInfo(dep, lang) {
+  const s = tr(lang);
+  if (dep.canceled) return { kind: "canceled", text: s.canceled };
+  if (!dep.realtime || dep.delay_s == null) return null;
+  if (Math.abs(dep.delay_s) < DELAY_THRESHOLD_S) return null;
+  const m = Math.round(Math.abs(dep.delay_s) / 60);
+  return dep.delay_s > 0 ? { kind: "late", text: s.late(m), long: s.lateLong(m) } : { kind: "early", text: s.early(m), long: s.earlyLong(m) };
+}
+function ariaLabel(group, nowMs, lang) {
+  const s = tr(lang), x = group.next;
+  const cd = formatCountdown(x.ms, nowMs, lang);
+  const when = cd.kind === "due" ? s.dueLong : cd.kind === "clock" ? `${s.at} ${cd.num}` : `${s.in} ${s.minutes(cd.minutes)}`;
+  const parts = [`${x.line} ${s.to} ${x.destination}`, x.canceled ? s.canceled : when];
+  if (!x.canceled) parts.push(x.realtime ? s.live : s.scheduled);
+  const dl = delayInfo(x, lang);
+  if (dl && dl.long) parts.push(dl.long);
+  return parts.join(", ");
+}
+
+/* ───────── grouping, hero, status, alerts ───────── */
+function groupDepartures(deps, group, maxThen = 2) {
+  if (!group) return deps.map((x) => ({ key: `${x.route_id || x.line}|${x.destination}|${x.trip_id || x.ms}`, next: x, then: [], canceled: [] }));
+  const map = new Map();
+  for (const x of deps) {
+    const key = `${x.route_id || x.line}|${x.destination}`;
+    if (!map.has(key)) map.set(key, { key, next: null, then: [], canceled: [] });
+    const g = map.get(key);
+    if (x.canceled) { g.canceled.push(x); continue; }
+    if (!g.next) g.next = x; else if (g.then.length < maxThen) g.then.push(x);
+  }
+  for (const g of map.values()) if (!g.next && g.canceled.length) g.next = g.canceled.shift();
+  return [...map.values()].sort((a, b) => a.next.ms - b.next.ms);
+}
+const pickHero = (deps, nowMs, minMinutes = 0) => deps.find((x) => !x.canceled && x.ms >= nowMs + minMinutes * 60000) || null;
+function stopStatus(deps, health, ageS) {
+  if (health === "down" || deps.some((x) => x.live_coverage === "feed_unavailable")) return "feed_down";
+  if (ageS > 300) return "stale";
+  const live = deps.some((x) => x.realtime), sched = deps.some((x) => !x.realtime);
+  return live && sched ? "mixed" : live ? "live" : "scheduled";
+}
+const SEVERITY_RANK = { severe: 3, warning: 2, info: 1 };
+/* Tisséo's GTFS-RT carries no severity: derive it from the effect (and Tisséo's 🔴/🟠 header prefix). */
+function severityOf(alert) {
+  const e = String(alert.effect || "").toUpperCase(), h = String(alert.header || "");
+  if (e === "NO_SERVICE" || h.startsWith("🔴")) return "severe";
+  if (/REDUCED_SERVICE|SIGNIFICANT_DELAYS|DETOUR|MODIFIED_SERVICE|STOP_MOVED/.test(e) || h.startsWith("🟠")) return "warning";
+  return "info";
+}
+
+/* ───────── one ticker for the whole card ───────── */
+class Ticker {
+  constructor(host) {
+    this.host = host; this.items = new Map(); this._visible = true; this._t = null;
+    this._onVis = () => this._sync();
+    this._tick = () => { const now = Date.now(); for (const el of [...this.items.keys()]) this._apply(el, now); this._schedule(); };
+    this._io = "IntersectionObserver" in window
+      ? new IntersectionObserver((e) => { this._visible = e.some((x) => x.isIntersecting); this._sync(); }) : null;
+  }
+  connect() { document.addEventListener("visibilitychange", this._onVis); this._io?.observe(this.host); this._sync(); }
+  disconnect() { document.removeEventListener("visibilitychange", this._onVis); this._io?.disconnect(); clearTimeout(this._t); this._t = null; }
+  track(el, render) {
+    this.items.set(el, { render, last: null, seen: false });
+    if (el.isConnected) this._apply(el, Date.now()); else queueMicrotask(() => this._apply(el, Date.now()));
+  }
+  _apply(el, now) {
+    const it = this.items.get(el);
+    if (!it) return;
+    if (!el.isConnected) { if (it.seen) this.items.delete(el); return; }
+    it.seen = true;
+    const key = it.render(el, now, it.last);
+    if (key !== undefined) it.last = key;
+  }
+  _schedule() { clearTimeout(this._t); this._t = setTimeout(this._tick, 1000 - (Date.now() % 1000) + 5); }
+  _sync() {
+    const run = !document.hidden && this._visible;
+    if (run && !this._t) this._tick();
+    if (!run && this._t) { clearTimeout(this._t); this._t = null; }
+  }
+}
+/* Keyed list update: rows are patched in place, removed rows animate out. */
+function reconcile(list, items, { key, create, update, reduceMotion = false }) {
+  const existing = new Map([...list.children].filter((li) => !li.classList.contains("is-leaving")).map((li) => [li.dataset.key, li]));
+  const keep = new Set();
+  let cursor = list.firstElementChild;
+  while (cursor && cursor.classList.contains("is-leaving")) cursor = cursor.nextElementSibling;
+  for (const item of items) {
+    const k = key(item);
+    keep.add(k);
+    let li = existing.get(k);
+    if (li) { const nu = update(li, item) || li; if (nu !== li && cursor === li) cursor = nu; li = nu; }
+    else {
+      li = create(item); li.dataset.key = k;
+      if (!reduceMotion) {
+        li.classList.add("is-entering");
+        li.addEventListener("animationend", () => li.classList.remove("is-entering"), { once: true });
+        setTimeout(() => li.classList.remove("is-entering"), 600);
+      }
+    }
+    if (li !== cursor) list.insertBefore(li, cursor);
+    else cursor = cursor.nextElementSibling;
+    while (cursor && cursor.classList.contains("is-leaving")) cursor = cursor.nextElementSibling;
+  }
+  for (const [k, li] of existing) {
+    if (keep.has(k)) continue;
+    if (reduceMotion) { li.remove(); continue; }
+    li.classList.add("is-leaving");
+    li.addEventListener("animationend", () => li.remove(), { once: true });
+    setTimeout(() => li.remove(), 400);
+  }
+}
+
+/* ───────── markup helpers ───────── */
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function lineVars(dep, surface, badgeMode) {
+  const { bg, fg } = badgeColors(dep.color, dep.text_color, badgeMode);
+  return `--line:${bg};--line-text:${fg};--line-ink:${inkColor(bg, surface)}`;
+}
+function badgeHTML(dep, size, badgeMode) {
+  const { bg, fg } = badgeColors(dep.color, dep.text_color, badgeMode);
+  return `<span class="tc-badge tc-badge--${badgeShape(dep)}${size ? ` tc-badge--${size}` : ""}" style="--line:${bg};--line-text:${fg}" aria-hidden="true">${esc(dep.line)}</span>`;
+}
+const LIVE_SVG = `<svg class="tc-live" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="12" r="2"/><path class="a1" d="M4 7.5a4.5 4.5 0 0 1 4.5 4.5"/><path class="a2" d="M4 3a9 9 0 0 1 9 9"/></svg>`;
+const LIVE_ANIM = LIVE_SVG.replace('class="tc-live"', 'class="tc-live tc-live--anim"');
+const I = {
+  stop: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="9" rx="2"/><path d="M9 7.5h6M12 12v9M9 21h6"/></svg>`,
+  clock: `<svg class="tc-ico tc-ico--s" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
+  filter: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
+  info: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>`,
+  warning: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4M12 17v.5"/></svg>`,
+  severe: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z"/><path d="M12 8v5M12 16v.5"/></svg>`,
+  chevron: `<svg class="tc-ico tc-alert__chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
+  close: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+  feedOff: `<svg class="tc-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="1.6"/><path d="M6 12a6 6 0 0 1 6 6M6 6a12 12 0 0 1 12 12M3 3l18 18"/></svg>`,
+  walk: `<svg class="tc-ico tc-ico--s" viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4.5" r="1.8"/><path d="M11 21l1.5-5.5L15 18v3M8.5 12.5 10.5 8l3 .5 2 3.5 2.5 1M10.5 8l-1 6"/></svg>`,
+};
+/* Countdown renderer for .tc-time elements (DOM touched only when the text changes). */
+function renderTime(lang) {
+  return (el, now, last) => {
+    const cd = formatCountdown(Number(el.dataset.expected), now, lang);
+    if (cd.text === last) return last;
+    const num = el.querySelector(".tc-time__num"), unit = el.querySelector(".tc-time__unit");
+    el.classList.toggle("is-due", cd.kind === "due");
+    el.closest(".tc-row, .tc-hero, .tc-brow")?.classList.toggle("is-due-now", cd.kind === "due");
+    num.textContent = cd.kind === "due" ? cd.word : cd.num;
+    unit.textContent = cd.unit || "";
+    if (last !== null) { num.classList.remove("is-ticking"); void num.offsetWidth; num.classList.add("is-ticking"); }
+    return cd.text;
+  };
+}
+
+const DEFAULTS = {
+  layout: "default", max_departures: 6, group: true, hero: "auto", hero_line: "", hero_min_minutes: 2,
+  leave_entity: "", alerts: "banner", timetable_notice: true, show_clock: false, badge_contrast: "auto",
+  board_theme: "dark", show_filters: false, trip_dialog: true,
+};
 
 class TisseoDeparturesCard extends HTMLElement {
   static getConfigElement() { return document.createElement("tisseo-departures-card-editor"); }
-
   static getStubConfig(hass) {
-    const id = Object.keys(hass.states).find((e) => e.startsWith("sensor.") &&
-      Array.isArray(hass.states[e].attributes.upcoming));
-    return { entity: id || "", max: 5, show_alerts: true };
+    const id = Object.keys(hass.states).find((e) => e.startsWith("sensor.") && Array.isArray(hass.states[e].attributes.upcoming));
+    return { entity: id || "" };
+  }
+
+  constructor() {
+    super();
+    this._ticker = new Ticker(this);
+    this._alertsOpen = null;
+    this._chipsOpen = true;
+    this._pageIdx = 0;
   }
 
   setConfig(config) {
     if (!config || (!config.entity && !config.device)) {
       throw new Error("Set 'entity' to a Tisséo departure sensor (e.g. sensor.tisseo_capitole_departure_1)");
     }
-    this._config = { max: 5, show_alerts: true, ...config };
-    this._rows = new Map();
+    const c = { ...DEFAULTS, ...config };
+    // 1.0 option names keep working
+    if (config.max_departures == null && config.max != null) c.max_departures = Number(config.max);
+    if (config.alerts == null && config.show_alerts === false) c.alerts = "off";
+    if (!config.filter_lines && Array.isArray(config.lines)) c.filter_lines = config.lines;
+    c.max_departures = Math.max(1, Number(c.max_departures) || DEFAULTS.max_departures);
+    c.layout = ["compact", "board"].includes(c.layout) ? c.layout : "default";
+    this._config = c;
     this._sig = null;
-    this._alertSig = null;
     this._built = false;
+    this._ids = null;
     this._sel = this._loadSel();
-    if (this.shadowRoot) this.shadowRoot.innerHTML = "";
+    if (this._hass) this.hass = this._hass;
+  }
+
+  connectedCallback() {
+    this._ticker.connect();
+    // Re-group once every 30 s so departed trains leave and "then" minutes stay right between sensor updates.
+    clearInterval(this._regroup);
+    this._regroup = setInterval(() => { if (this._built && this._hass && !document.hidden) this._render(); }, 30000);
+  }
+  disconnectedCallback() {
+    this._ticker.disconnect();
+    clearInterval(this._regroup); this._regroup = null;
+    clearInterval(this._pager); this._pager = null;
+    if (this._dialog?.open) this._dialog.close();
+  }
+
+  getCardSize() {
+    const c = this._config || DEFAULTS;
+    if (c.layout === "board") return 12;
+    const heroOn = c.hero === "auto" ? c.layout === "default" : !!c.hero;
+    return Math.ceil(1.5 + (heroOn ? 2 : 0) + c.max_departures * (c.layout === "compact" ? 0.9 : 1.2) + 1);
+  }
+  getGridOptions() {
+    const l = (this._config || DEFAULTS).layout;
+    if (l === "board") return { columns: "full", rows: "auto", min_columns: 12 };
+    if (l === "compact") return { columns: 6, rows: "auto", min_columns: 3 };
+    return { columns: 12, rows: "auto", min_columns: 6 };
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._config) return;
+    const r = this._resolve();
+    const sig = [r.dep, r.alerts, r.leave, r.health, r.tt].map((id) => id && hass.states[id]?.last_updated)
+      .concat([hass.themes?.darkMode, hass.locale?.language, hass.language]).join("|");
+    if (sig === this._sig && this._built) return;
+    this._sig = sig;
+    this._ids = r;
+    this._render();
+  }
+
+  /* ---------- data ---------- */
+  _resolve() {
+    const h = this._hass, ents = h.entities || {}, c = this._config;
+    const dev = c.device || ents[c.entity]?.device_id;
+    const r = { dep: null, alerts: c.alerts_entity || null, leave: c.leave_entity || null, health: null, tt: null };
+    if (dev) {
+      for (const [id, e] of Object.entries(ents)) {
+        if (e.device_id !== dev || !h.states[id]) continue;
+        const a = h.states[id].attributes;
+        if (Array.isArray(a.upcoming)) { if (!r.dep || /_departure_1$/.test(id)) r.dep = id; }
+        else if (!r.alerts && Array.isArray(a.headlines)) r.alerts = id;
+        else if (!r.leave && id.startsWith("sensor.") && "leave_at" in a) r.leave = id;
+        else if (!r.health && a.feeds && typeof a.feeds === "object") r.health = id;
+        else if (!r.tt && id.startsWith("binary_sensor.") && "tomorrow_departures" in a) r.tt = id;
+      }
+    }
+    if (!r.dep && c.entity) {
+      const guess = c.entity.replace(/_(departure_\d+|disruptions|leave_in)$/, "_departure_1");
+      r.dep = h.states[guess] ? guess : c.entity;
+    }
+    const base = r.dep ? r.dep.replace(/_departure_\d+$/, "") : "";
+    const guess = (k, id) => { if (!r[k] && base && h.states[id]) r[k] = id; };
+    guess("alerts", `${base}_disruptions`);
+    guess("leave", `${base}_leave_in`);
+    guess("health", `${base}_feed_health`);
+    guess("tt", `${base.replace(/^sensor\./, "binary_sensor.")}_timetable_change_tomorrow`);
+    return r;
+  }
+
+  _norm(list) {
+    // One shape for every departure: `delay_s` from delay_seconds (sensor) or delay (upcoming items).
+    return (list || []).map((d) => ({ ...d, ms: Date.parse(d.expected), delay_s: d.delay_seconds ?? d.delay ?? null }))
+      .filter((x) => !Number.isNaN(x.ms)).sort((a, b) => a.ms - b.ms);
   }
 
   _selKey() {
     const c = this._config;
     return `tisseo-card-filter:${c.entity || c.device}|${c.title || ""}|${c.layout || "default"}`;
   }
-
   _loadSel() {
     try {
       const v = JSON.parse(localStorage.getItem(this._selKey()) || "{}");
       return { lines: new Set(v.lines || []), dests: new Set(v.dests || []) };
     } catch (e) { return { lines: new Set(), dests: new Set() }; }
   }
-
   _saveSel() {
-    try {
-      localStorage.setItem(this._selKey(), JSON.stringify({ lines: [...this._sel.lines], dests: [...this._sel.dests] }));
-    } catch (e) { /* storage unavailable */ }
+    try { localStorage.setItem(this._selKey(), JSON.stringify({ lines: [...this._sel.lines], dests: [...this._sel.dests] })); }
+    catch (e) { /* storage unavailable */ }
   }
-
-  _filter(list) {
-    const lines = (this._config.filter_lines || []).map((x) => String(x).toLowerCase());
-    const dests = (this._config.filter_destinations || []).map((x) => String(x).toLowerCase()).filter(Boolean);
-    // in-card chip selection only applies to cards that show the chips
-    const sel = this._config.show_filters ? this._sel : null;
-    const sl = sel?.lines || new Set(), sd = sel?.dests || new Set();
-    return list.filter((d) => {
-      const ln = String(d.line ?? "").toLowerCase(), de = String(d.destination ?? "").toLowerCase();
-      if (lines.length && !lines.includes(ln) && !lines.includes(String(d.route_id ?? "").toLowerCase())) return false;
-      if (dests.length && !dests.some((x) => de.includes(x))) return false;
-      if (sl.size && !sl.has(String(d.line))) return false;
-      if (sd.size && !sd.has(String(d.destination))) return false;
+  _filter(list, useSel = true) {
+    const c = this._config;
+    const lines = (c.filter_lines || []).map((x) => String(x).toLowerCase());
+    const dests = (c.filter_destinations || []).map((x) => String(x).toLowerCase()).filter(Boolean);
+    const sel = useSel && c.show_filters ? this._sel : null; // chip selection only for cards that show chips
+    return list.filter((x) => {
+      const ln = String(x.line ?? "").toLowerCase(), de = String(x.destination ?? "").toLowerCase();
+      if (lines.length && !lines.includes(ln) && !lines.includes(String(x.route_id ?? "").toLowerCase())) return false;
+      if (dests.length && !dests.some((v) => de.includes(v))) return false;
+      if (sel?.lines.size && !sel.lines.has(String(x.line))) return false;
+      if (sel?.dests.size && !sel.dests.has(String(x.destination))) return false;
       return true;
     });
   }
 
-  _renderFilters(all) {
-    const f = this._el.filters;
-    if (!this._config.show_filters) { f.hidden = true; return; }
-    // chips come from departures already narrowed by the static (YAML) filters
-    const base = this._filter.call({ _config: this._config, _sel: null }, all);
-    const lines = new Map(), freq = new Map();
-    for (const d of base) {
-      if (!lines.has(String(d.line))) lines.set(String(d.line), d.color);
-      // direction chips follow the selected lines, most frequent first (max 6)
-      if (this._sel.lines.size && !this._sel.lines.has(String(d.line))) continue;
-      freq.set(String(d.destination), (freq.get(String(d.destination)) || 0) + 1);
-    }
-    for (const l of this._sel.lines) if (!lines.has(l)) lines.set(l, null);
-    const dests = new Set([...freq].sort((a, b) => b[1] - a[1]).slice(0, 6).map((x) => x[0]));
-    for (const x of this._sel.dests) dests.add(x);
-    const sig = JSON.stringify([[...lines], [...dests], [...this._sel.lines], [...this._sel.dests]]);
-    if (sig === this._fsig) return;
-    this._fsig = sig;
-    const none = !this._sel.lines.size && !this._sel.dests.size;
-    const btn = (k, v, label, c) => `<button data-k="${k}" data-v="${tdcEsc(v)}" class="${this._sel[k]?.has(v) ? "on" : ""}"` +
-      `${c ? ` style="--c:${tdcEsc(c)}"` : ""}>${c !== undefined ? "<i></i>" : ""}${tdcEsc(label)}</button>`;
-    f.innerHTML = `<button data-k="all" class="${none ? "on" : ""}">${this._t.all}</button>` +
-      [...lines].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
-        .map(([l, c]) => btn("lines", l, l, c || "var(--tdc-accent)")).join("") +
-      (dests.size > 1 || this._sel.dests.size ? '<span class="sep"></span>' +
-        [...dests].sort().map((x) => btn("dests", x, `→ ${x}`)).join("") : "");
-    f.hidden = false;
+  /* ---------- render ---------- */
+  _render() {
+    const hass = this._hass, c = this._config;
+    if (!hass || !c) return;
+    if (!this._ids) this._ids = this._resolve();
+    const lang = (hass.locale?.language || hass.language || "en").slice(0, 2);
+    const s = tr(lang);
+    const dark = !!hass.themes?.darkMode;
+    this._lang = lang; this._s = s;
+    const tf = hass.locale?.time_format;
+    TIMEFMT.locale = tf === "system" ? undefined : hass.locale?.language || hass.language;
+    TIMEFMT.hour12 = tf === "12" ? true : tf === "24" ? false : undefined;
+    this._surface = c.layout === "board" && c.board_theme !== "auto" ? "#0B1220" : dark ? "#1C1C1C" : "#FFFFFF";
+    const st = this._ids.dep && hass.states[this._ids.dep];
+    if (!this._built || this._builtLayout !== c.layout) this._buildSkeleton(c.layout);
+    const card = this._card;
+    card.dataset.layout = c.layout;
+    card.dataset.theme = dark ? "dark" : "light";
+    card.dataset.boardTheme = c.board_theme === "auto" ? (dark ? "dark" : "light") : "dark";
+    if (!st) return this._renderError(s);
+
+    const now = Date.now();
+    // Departures more than a minute gone are dropped between two sensor updates.
+    const all = this._norm(st.attributes.upcoming).filter((x) => x.ms > now - 60000);
+    this._stopId = st.attributes.stop_id;
+    this._routeLine = new Map(all.map((x) => [x.route_id, x]));
+    const deps = this._filter(all);
+    const health = this._ids.health ? hass.states[this._ids.health]?.state : null;
+    const status = stopStatus(deps.length ? deps : all, health, (now - Date.parse(st.last_updated)) / 1000);
+    card.classList.toggle("is-stale", status === "stale");
+    const alerts = this._alertList(deps);
+
+    if (c.layout === "board") return this._renderBoard(st, deps, status, alerts, now);
+
+    this._renderHeader(st, all, status);
+    this._renderChips(all);
+    this._renderNotices(status, st);
+
+    let hero = null, leave = null;
+    const heroOn = c.hero === "auto" ? c.layout === "default" : !!c.hero;
+    if (heroOn) ({ hero, leave } = this._pickHero(deps, now));
+    this._renderHero(hero, leave, deps, now);
+
+    // The hero is not repeated in the list. Its direction stays listed only when an earlier departure
+    // (one you can no longer catch on foot) exists; later ones are already the hero's "then".
+    const heroKey = hero ? `${hero.route_id || hero.line}|${hero.destination}` : null;
+    const groups = groupDepartures(hero ? deps.filter((x) => x !== hero) : deps, c.group !== false)
+      .filter((g) => !(c.group !== false && g.key === heroKey && g.next.ms > hero.ms)).slice(0, c.max_departures);
+    if (!groups.length && !hero) this._renderEmpty(all.length > 0);
+    else this._emptyEl.hidden = true;
+
+    reconcile(this._list, groups, {
+      key: (g) => g.key, reduceMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      create: (g) => this._rowEl(g, now, alerts),
+      update: (li, g) => this._patch(li, g, alerts, () => this._rowEl(g, now, alerts)),
+    });
+    this._renderAlerts(alerts);
   }
 
-  set hass(hass) {
-    this._hass = hass;
-    if (!this._built) this._build();
-    this._update();
+  _patch(el, g, alerts, make) {
+    const sig = this._rowSig(g, alerts);
+    if (el._sig === sig) { el._group = g; return el; }
+    const fresh = make();
+    fresh.dataset.key = el.dataset.key;
+    el.replaceWith(fresh);
+    return fresh;
   }
 
-  connectedCallback() {
-    if (!this._timer) this._timer = setInterval(() => this._tick(), 1000);
+  _rowSig(g, alerts) {
+    const x = g.next;
+    return JSON.stringify([x.trip_id, x.ms, x.realtime, x.delay_s, x.canceled, g.then.map((y) => y.ms),
+      g.canceled.map((y) => y.ms), this._flag(x, alerts), this._lang, Math.floor(Date.now() / 60000)]);
   }
 
-  disconnectedCallback() {
-    this._closeTrip();
-    clearInterval(this._timer);
-    this._timer = null;
+  _flag(x, alerts) {
+    let best = null;
+    for (const a of alerts) if (a.routes.includes(x.route_id) && (!best || SEVERITY_RANK[a.severity] > SEVERITY_RANK[best])) best = a.severity;
+    return best;
   }
 
-  getCardSize() {
-    const n = Math.min(this._config?.max || 5, 8);
-    return this._config?.layout === "compact" ? 1 + Math.ceil(n / 2) : 2 + n;
+  _rowEl(g, now, alerts) {
+    const c = this._config, lang = this._lang, s = this._s, x = g.next;
+    const dl = delayInfo(x, lang);
+    const then = g.then.map((y) => Math.max(0, Math.floor((y.ms - now) / 60000)));
+    const delayChip = dl && dl.kind !== "canceled" ? ` <span class="tc-delay tc-delay--${dl.kind}">${esc(dl.text)}</span>` : "";
+    const skipped = g.canceled.find((y) => y.ms < x.ms);
+    const skippedNote = skipped && !x.canceled
+      ? `<span class="tc-cancel">${hhmm(Date.parse(skipped.scheduled || skipped.expected), lang)} ${esc(s.canceled.toLowerCase())}</span> · ` : "";
+    const flag = this._flag(x, alerts);
+    const flagIco = flag && flag !== "info"
+      ? I[flag].replace('class="tc-ico"', `class="tc-ico tc-flag${flag === "severe" ? " tc-flag--severe" : ""}"`) : "";
+    const tap = c.trip_dialog !== false && !!x.trip_id;
+    const tag = tap ? "button" : "div";
+    const li = document.createElement("li");
+    li.className = ["tc-row", x.canceled ? "is-canceled" : "", x.realtime ? "is-live" : "is-sched"].filter(Boolean).join(" ");
+    li.setAttribute("style", lineVars(x, this._surface, c.badge_contrast));
+    li.innerHTML = `<${tag} class="tc-row__hit"${tap ? ' type="button"' : ""} aria-label="${esc(ariaLabel(g, now, lang))}">
+      ${badgeHTML(x, "", c.badge_contrast)}
+      <span class="tc-row__main">
+        <span class="tc-row__dest">${esc(x.destination)}${flagIco}</span>
+        <span class="tc-row__meta">${x.canceled ? `<span class="tc-cancel">${esc(s.canceled)}</span> · ` : skippedNote}${x.realtime ? "" : I.clock}${hhmm(x.ms, lang)}${delayChip}${then.length ? ` · ${esc(s.then)} ${then.join(", ")} ${s.min}` : ""}</span>
+      </span>
+      ${c.layout === "compact" ? `<span class="tc-then">${then.length ? `${then[0]} ${s.min}` : ""}</span>` : ""}
+      ${x.canceled ? `<span class="tc-time tc-time--canceled">${esc(s.canceled)}</span>`
+        : `<span class="tc-time" data-expected="${x.ms}">${x.realtime ? LIVE_SVG : ""}<span class="tc-time__num"></span><span class="tc-time__unit"></span></span>`}
+    </${tag}>`;
+    li._group = g;
+    li._sig = this._rowSig(g, alerts);
+    if (tap) li.firstElementChild.addEventListener("click", () => this._openTrip(li._group.next));
+    const tEl = li.querySelector(".tc-time[data-expected]");
+    if (tEl) this._ticker.track(tEl, renderTime(lang));
+    return li;
   }
 
-  getGridOptions() { return { columns: 12, min_columns: 6, rows: "auto" }; }
-
-  get _t() {
-    const lang = (this._hass?.locale?.language || this._hass?.language || "en").slice(0, 2);
-    return TDC_I18N[lang] || TDC_I18N.en;
-  }
-
-  _build() {
+  _buildSkeleton(layout) {
+    this._builtLayout = layout;
+    clearInterval(this._pager); this._pager = null;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
-    this.shadowRoot.innerHTML = `<style>${TDC_CSS}</style>
-      <ha-card>
-        <div class="header">
-          <div class="icon"><ha-icon icon="mdi:bus-clock"></ha-icon></div>
-          <div class="t"><div class="title"></div><div class="sub"></div></div>
-          <div class="clock"></div>
-        </div>
-        <div class="filters" hidden></div>
-        <div class="bhead" hidden></div>
-        <div class="list"></div>
-        <div class="ticker" hidden>
-          <div class="lbl"><ha-icon icon="mdi:alert"></ha-icon><span class="n"></span></div>
-          <div class="marquee"><div class="track"></div></div>
-        </div>
-      </ha-card>`;
-    const $ = (s) => this.shadowRoot.querySelector(s);
-    this._el = { title: $(".title"), sub: $(".sub"), clock: $(".clock"), list: $(".list"),
-                 ticker: $(".ticker"), track: $(".track"), n: $(".ticker .n"), icon: $(".header ha-icon"),
-                 card: $("ha-card"), filters: $(".filters"), bhead: $(".bhead") };
-    const layout = ["compact", "board"].includes(this._config.layout) ? this._config.layout : "default";
-    this._el.card.classList.add(layout);
-    this._layout = layout;
+    const root = this.shadowRoot;
+    let styleTag = "";
+    if ("adoptedStyleSheets" in root && typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype) {
+      if (!TisseoDeparturesCard._sheet) { TisseoDeparturesCard._sheet = new CSSStyleSheet(); TisseoDeparturesCard._sheet.replaceSync(STYLES); }
+      root.adoptedStyleSheets = [TisseoDeparturesCard._sheet];
+    } else styleTag = `<style>${STYLES}</style>`;
+    const dialog = `<dialog class="tc tc-dialog" aria-labelledby="tc-dlg-title"></dialog>`;
     if (layout === "board") {
-      const t = this._t;
-      this._el.bhead.hidden = false;
-      this._el.bhead.innerHTML = `<span>${t.board_line}</span><span>${t.board_dest}</span>` +
-        `<span style="text-align:right">${t.board_time}</span><span style="text-align:right">${t.board_info}</span>`;
+      root.innerHTML = `${styleTag}
+        <ha-card class="tc">
+          <header class="tc-board__head"></header>
+          <div class="tc-board__cols">
+            ${["metro", "other"].map((p) => `<section class="tc-board__panel" data-panel="${p}" hidden>
+              <h3 class="tc-board__panel-title"></h3>
+              <div class="tc-bhead" aria-hidden="true"></div>
+              <div class="tc-brows" role="table"></div></section>`).join("")}
+          </div>
+          <div class="tc-empty" hidden></div>
+          <footer class="tc-board__foot" role="status" hidden></footer>
+        </ha-card>${dialog}`;
+      this._head = root.querySelector(".tc-board__head");
+      this._emptyEl = root.querySelector(".tc-empty");
+    } else {
+      root.innerHTML = `${styleTag}
+        <ha-card class="tc">
+          <header class="tc-head"></header>
+          <div class="tc-chips" role="toolbar" hidden></div>
+          <div class="tc-notice-slot"></div>
+          <div class="tc-hero-slot"></div>
+          <div class="tc-empty" hidden></div>
+          <ol class="tc-list"></ol>
+          <div class="tc-alerts-slot"></div>
+        </ha-card>${dialog}`;
+      this._head = root.querySelector(".tc-head");
+      this._chips = root.querySelector(".tc-chips");
+      this._noticeSlot = root.querySelector(".tc-notice-slot");
+      this._heroSlot = root.querySelector(".tc-hero-slot");
+      this._emptyEl = root.querySelector(".tc-empty");
+      this._list = root.querySelector(".tc-list");
+      this._alertsSlot = root.querySelector(".tc-alerts-slot");
+      const rerender = () => { this._chipSig = null; this._headHtml = null; this._render(); };
+      this._chips.addEventListener("click", (ev) => {
+        const b = ev.target.closest("button");
+        if (!b) return;
+        const kind = b.dataset.k, val = b.dataset.v;
+        if (kind === "all") this._sel = { lines: new Set(), dests: new Set() };
+        else { const set = this._sel[kind]; if (set.has(val)) set.delete(val); else set.add(val); }
+        this._saveSel(); rerender();
+      });
+      this._head.addEventListener("click", (ev) => {
+        if (!ev.target.closest(".tc-iconbtn")) return;
+        this._chipsOpen = !this._chipsOpen; rerender();
+      });
+      this._emptyEl.addEventListener("click", (ev) => {
+        if (!ev.target.closest(".tc-textbtn")) return;
+        this._sel = { lines: new Set(), dests: new Set() }; this._saveSel(); rerender();
+      });
     }
-    this._el.list.addEventListener("click", (ev) => {
-      const row = ev.target.closest(".row");
-      if (row && row._d && this._config.trip_dialog !== false) this._openTrip(row._d);
-    });
-    this._el.list.addEventListener("keydown", (ev) => {
-      const row = ev.target.closest(".row");
-      if (row && (ev.key === "Enter" || ev.key === " ") && row._d && this._config.trip_dialog !== false) {
-        ev.preventDefault(); this._openTrip(row._d);
-      }
-    });
-    this._el.filters.addEventListener("click", (ev) => {
-      const b = ev.target.closest("button");
-      if (!b) return;
-      const kind = b.dataset.k, val = b.dataset.v;
-      if (kind === "all") { this._sel = { lines: new Set(), dests: new Set() }; }
-      else {
-        const set = this._sel[kind];
-        set.has(val) ? set.delete(val) : set.add(val);
-      }
-      this._saveSel();
-      this._sig = null; this._fsig = null;
-      this._update();
-    });
+    this._card = root.querySelector(".tc");
+    this._dialog = root.querySelector("dialog");
+    this._dialog.addEventListener("click", (e) => { if (e.target === this._dialog) this._dialog.close(); });
+    this._headHtml = null; this._chipSig = null; this._noticeHtml = null; this._heroKey = null; this._alertsHtml = null;
     this._built = true;
   }
 
-  _resolve() {
-    const h = this._hass, ents = h.entities || {};
-    let dev = this._config.device || ents[this._config.entity]?.device_id;
-    let dep = null, alerts = this._config.alerts_entity || null;
-    if (dev) {
-      for (const [id, e] of Object.entries(ents)) {
-        if (e.device_id !== dev || !h.states[id]) continue;
-        const a = h.states[id].attributes;
-        if (Array.isArray(a.upcoming)) dep = id;
-        else if (!alerts && Array.isArray(a.headlines)) alerts = id;
-      }
-    }
-    if (!dep && this._config.entity) {
-      const guess = this._config.entity.replace(/_(departure_\d+|disruptions)$/, "_departure_1");
-      dep = h.states[guess] ? guess : this._config.entity;
-    }
-    if (!alerts && dep) {
-      const guess = dep.replace(/_departure_\d+$/, "_disruptions");
-      if (h.states[guess]) alerts = guess;
-    }
-    return { dep, alerts };
+  _renderHeader(st, all, status) {
+    const c = this._config, s = this._s;
+    const title = c.title || st.attributes.stop_name || "Tisséo";
+    const metroSched = all.some((x) => !x.realtime && x.mode === "metro");
+    const liveLines = st.attributes.live_lines || [];
+    const sub = {
+      live: `${LIVE_SVG}${esc(s.live)}`,
+      stale: `${LIVE_SVG}${esc(s.live)}`,
+      mixed: `${LIVE_SVG}${esc(s.live)} <span aria-hidden="true">·</span> ${I.clock}${esc(metroSched ? s.metroSched : s.partlyLive)}`,
+      scheduled: `${I.clock}${esc(s.scheduled)}`,
+      feed_down: `${I.clock}${esc(s.scheduled)}`,
+    }[status];
+    const nSel = this._sel.lines.size + this._sel.dests.size;
+    const right = c.show_filters
+      ? `<button class="tc-iconbtn" type="button" aria-label="${esc(s.filter)}" aria-expanded="${this._chipsOpen}">${I.filter}${nSel ? `<span class="tc-iconbtn__count">${nSel}</span>` : ""}</button>`
+      : c.show_clock ? `<time class="tc-head__clock"></time>` : "<span></span>";
+    const html = `<div class="tc-head__icon">${I.stop}</div>
+      <div><h2 class="tc-head__title">${esc(title)}</h2><p class="tc-head__sub"${liveLines.length ? ` title="${esc(s.live)}: ${esc(liveLines.join(" · "))}"` : ""}>${sub}</p></div>${right}`;
+    if (this._headHtml === html) return;
+    this._headHtml = html;
+    this._head.innerHTML = html;
+    const clock = this._head.querySelector("time");
+    if (clock) this._ticker.track(clock, (el, n, last) => { const v = hhmm(n, this._lang); if (v !== last) el.textContent = v; return v; });
   }
 
-  _update() {
-    const { dep, alerts } = this._resolve();
-    const st = dep && this._hass.states[dep];
-    const t = this._t;
-    if (!st) {
-      this._el.title.textContent = this._config.title || "Tisséo";
-      this._el.list.innerHTML = `<div class="empty">${t.unavailable}: ${tdcEsc(dep || this._config.entity)}</div>`;
-      this._rows.clear();
+  _renderChips(all) {
+    const c = this._config, s = this._s, el = this._chips;
+    if (!c.show_filters || !this._chipsOpen) { el.hidden = true; return; }
+    const base = this._filter(all, false);
+    const lines = new Map(), freq = new Map();
+    for (const x of base) {
+      if (!lines.has(String(x.line))) lines.set(String(x.line), x);
+      if (this._sel.lines.size && !this._sel.lines.has(String(x.line))) continue; // directions follow the selected lines
+      freq.set(String(x.destination), (freq.get(String(x.destination)) || 0) + 1);
+    }
+    for (const l of this._sel.lines) if (!lines.has(l)) lines.set(l, { line: l });
+    const dests = new Set([...freq].sort((a, b) => b[1] - a[1]).slice(0, 6).map((v) => v[0]));
+    for (const v of this._sel.dests) dests.add(v);
+    const sig = JSON.stringify([[...lines.keys()], [...dests], [...this._sel.lines], [...this._sel.dests], this._lang]);
+    el.hidden = false;
+    if (sig === this._chipSig) return;
+    this._chipSig = sig;
+    const none = !this._sel.lines.size && !this._sel.dests.size;
+    const chip = (k, v, inner, text) => `<button type="button" class="tc-chip${text ? " tc-chip--text" : ""}" data-k="${k}" data-v="${esc(v)}" aria-pressed="${k === "all" ? none : this._sel[k].has(v)}">${inner}</button>`;
+    el.innerHTML = chip("all", "", esc(s.all), true) +
+      [...lines].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+        .map(([l, x]) => chip("lines", l, badgeHTML(x, "xs", c.badge_contrast))).join("") +
+      (dests.size > 1 || this._sel.dests.size ? [...dests].sort().map((v) => chip("dests", v, `→ ${esc(v)}`, true)).join("") : "");
+  }
+
+  _renderNotices(status, st) {
+    const s = this._s, c = this._config, hass = this._hass;
+    let html = "";
+    if (status === "feed_down") {
+      html += `<div class="tc-notice tc-notice--warning" role="status">${I.feedOff}<span><b>${esc(s.feedDown)}</b><span class="tc-notice__sub">${esc(s.feedDownSub)}</span></span></div>`;
+    } else if (status === "stale") {
+      const m = Math.round((Date.now() - Date.parse(st.last_updated)) / 60000);
+      html += `<div class="tc-notice" role="status">${I.info}<span><b>${esc(s.stale(m))}</b></span></div>`;
+    }
+    const tt = c.timetable_notice !== false && this._ids.tt ? hass.states[this._ids.tt] : null;
+    if (tt?.state === "on") {
+      html += `<div class="tc-notice" role="status">${I.info}<span><b>${esc(s.ttChange)}</b><span class="tc-notice__sub">${esc(s.ttSub(tt.attributes) || tt.attributes.description || "")}</span></span></div>`;
+    }
+    if (this._noticeHtml !== html) { this._noticeSlot.innerHTML = html; this._noticeHtml = html; }
+  }
+
+  /* Leave-now data comes from the integration's "leave in" sensor (walking time + buffer). */
+  _leaveInfo() {
+    const e = this._ids.leave && this._hass.states[this._ids.leave];
+    const a = e?.attributes;
+    if (!a || !(Number(a.walking_time) > 0)) return null;
+    return { walk: Number(a.walking_time), buffer: Number(a.buffer || 0), next: a.next_catchable || null };
+  }
+
+  _pickHero(deps, now) {
+    const c = this._config, L = this._leaveInfo();
+    const minMinutes = L ? L.walk : Number(c.hero_min_minutes) || 0;
+    let hero = null;
+    if (c.hero_line) {
+      hero = deps.find((x) => `${x.line}|${x.destination}` === c.hero_line && !x.canceled && x.ms - now >= minMinutes * 60000) || null;
+    } else if (L?.next?.trip_id) {
+      hero = deps.find((x) => x.trip_id === L.next.trip_id && !x.canceled) || null;
+    }
+    if (!hero) hero = pickHero(deps, now, minMinutes);
+    const leave = L && hero ? { walk: L.walk, leaveAt: hero.ms - (L.walk + L.buffer) * 60000, catchBy: hero.ms - L.walk * 60000 } : null;
+    return { hero, leave };
+  }
+
+  _renderHero(hero, leave, deps, now) {
+    const c = this._config, s = this._s, lang = this._lang;
+    if (!hero) { this._heroSlot.innerHTML = ""; this._heroKey = null; return; }
+    const then = deps.filter((x) => x !== hero && x.line === hero.line && x.destination === hero.destination && !x.canceled && x.ms > hero.ms)
+      .slice(0, 2).map((x) => Math.floor((x.ms - now) / 60000));
+    const key = JSON.stringify([hero.trip_id, hero.ms, hero.realtime, hero.delay_s, then, leave?.leaveAt, lang, c.trip_dialog]);
+    if (this._heroKey === key) return;
+    this._heroKey = key;
+    const dl = delayInfo(hero, lang);
+    const tap = c.trip_dialog !== false && !!hero.trip_id;
+    const tag = tap ? "button" : "div";
+    this._heroSlot.innerHTML = `
+      <${tag} class="tc-hero"${tap ? ' type="button"' : ""} style="${lineVars(hero, this._surface, c.badge_contrast)}">
+        <span class="tc-hero__eyebrow"></span>
+        ${badgeHTML(hero, "l", c.badge_contrast)}
+        <span class="tc-hero__main">
+          <span class="tc-hero__dest">${esc(hero.destination)}</span>
+          <span class="tc-hero__meta">${hero.realtime ? "" : I.clock}${hhmm(hero.ms, lang)}${dl && dl.kind !== "canceled" ? ` <span class="tc-delay tc-delay--${dl.kind}">${esc(dl.text)}</span>` : ""}${then.length ? ` · ${esc(s.then)} ${then.join(", ")} ${s.min}` : ""}</span>
+        </span>
+        <span class="tc-time" data-expected="${hero.ms}">${hero.realtime ? LIVE_ANIM : ""}<span class="tc-time__num"></span><span class="tc-time__unit"></span></span>
+      </${tag}>`;
+    const btn = this._heroSlot.firstElementChild;
+    if (tap) btn.addEventListener("click", () => this._openTrip(hero));
+    this._ticker.track(btn.querySelector(".tc-time"), renderTime(lang));
+    this._ticker.track(btn.querySelector(".tc-hero__eyebrow"), (el, n, last) => {
+      let html = esc(s.next);
+      if (leave) {
+        const secs = Math.floor((leave.leaveAt - n) / 1000);
+        if (n > leave.catchBy + 30000) html = `${I.walk}${esc(s.missed)} · ${esc(s.walk(leave.walk))}`;
+        else if (secs > 60) html = `${I.walk}${esc(s.leaveIn)} ${Math.ceil(secs / 60)} ${s.min} · ${esc(s.walk(leave.walk))}`;
+        else html = `${I.walk}<b>${esc(s.leaveNow)}</b> · ${esc(s.walk(leave.walk))}`;
+      }
+      if (html !== last) el.innerHTML = html;
+      return html;
+    });
+  }
+
+  _alertList(deps) {
+    const st = this._ids.alerts && this._hass.states[this._ids.alerts];
+    const raw = st?.attributes?.alerts || [];
+    const visible = new Set(deps.map((x) => x.route_id));
+    return raw.map((a) => ({
+      title: a.header || "", description: a.description || "", url: a.url || "", severity: severityOf(a),
+      routes: a.lines || [], network: !!a.network_wide,
+    }))
+      .filter((a) => !a.routes.length || !visible.size || a.routes.some((r) => visible.has(r)))
+      .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || (a.network - b.network));
+  }
+
+  _lineBadges(a, max = 3) {
+    return a.routes.slice(0, max).map((r) => this._routeLine.get(r)).filter(Boolean)
+      .map((x) => badgeHTML(x, "xs", this._config.badge_contrast)).join("");
+  }
+
+  _renderAlerts(list) {
+    const c = this._config, s = this._s;
+    if (c.alerts === "off" || !list.length) {
+      if (this._alertsHtml !== "") { this._alertsSlot.innerHTML = ""; this._alertsHtml = ""; }
       return;
     }
-    const a = st.attributes;
-    this._el.title.textContent = this._config.title || a.stop_name || "Tisséo";
-    const live = a.live_lines || [];
-    const sub = live.length
-      ? `<span class="live"><span class="dot"></span>${t.livelines}: ${tdcEsc(live.join(" · "))}</span>`
-      : `<span class="tt"><ha-icon icon="mdi:clock-outline"></ha-icon>${t.nolive}</span>`;
-    if (this._el.sub.innerHTML !== sub) this._el.sub.innerHTML = sub;
-    const first = (a.upcoming || [])[0];
-    this._el.icon.setAttribute("icon", first?.mode === "metro" ? "mdi:subway-variant"
-      : first?.mode === "tram" ? "mdi:tram" : "mdi:bus-clock");
-
-    this._stopId = a.stop_id;
-    this._renderFilters(a.upcoming || []);
-    const deps = this._filter(a.upcoming || []).slice(0, this._config.max);
-    const sig = JSON.stringify(deps.map((d) => [d.trip_id, d.expected, d.realtime, d.delay, d.canceled]));
-    if (sig !== this._sig) {
-      this._sig = sig;
-      this._renderRows(deps);
-    }
-    this._renderAlerts(alerts ? this._hass.states[alerts] : null, deps);
-    this._tick();
+    const top = list[0], rest = list.length - 1;
+    const open = this._alertsOpen ?? top.severity === "severe";
+    const items = list.map((a) => `<li class="tc-alerts__item tc-alerts__item--${a.severity}">${I[a.severity]}
+        <span class="tc-alerts__title">${this._lineBadges(a)}${esc(a.title)}</span>
+        <span class="tc-alerts__desc">${esc(a.description)}</span>
+        ${a.url ? `<a class="tc-alerts__link" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(s.more)}</a>` : ""}</li>`).join("");
+    const count = c.alerts === "count";
+    const html = `
+      <button class="tc-alert tc-alert--${top.severity}" type="button" aria-expanded="${open}" aria-controls="tc-alerts">
+        ${I[top.severity]}
+        <span class="tc-alert__text">${count ? "" : this._lineBadges(top, 1)}<span>${esc(count ? `${list.length} · ${s.disruptions}` : top.title)}</span></span>
+        ${rest && !count ? `<span class="tc-alert__count">+${rest}</span>` : "<span></span>"}
+        ${I.chevron}
+      </button>
+      <ul class="tc-alerts__list" id="tc-alerts"${open ? "" : " hidden"}>${items}</ul>`;
+    if (this._alertsHtml === html) return;
+    this._alertsHtml = html;
+    this._alertsSlot.innerHTML = html;
+    this._alertsSlot.querySelector(".tc-alert").addEventListener("click", () => { this._alertsOpen = !open; this._renderAlerts(list); });
   }
 
-  _key(d) { return d.trip_id || `${d.line}|${d.scheduled || d.expected}`; }
+  _renderEmpty(hasAny) {
+    const s = this._s, el = this._emptyEl;
+    const filtered = hasAny && (this._sel.lines.size || this._sel.dests.size) && this._config.show_filters;
+    el.hidden = false;
+    el.innerHTML = filtered
+      ? `<div class="tc-empty__icon">${I.filter}</div><p class="tc-empty__title">${esc(s.noMatch)}</p><button class="tc-textbtn" type="button">${esc(s.showAll)}</button>`
+      : `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(hasAny ? s.noMatch : s.noDep)}</p>`;
+  }
 
-  _renderRows(deps) {
-    const t = this._t, list = this._el.list;
-    list.querySelector(".empty")?.remove();
-    const keep = new Set();
-    deps.forEach((d, i) => {
-      const k = this._key(d);
-      keep.add(k);
-      let row = this._rows.get(k);
-      const fresh = !row;
-      if (fresh) {
-        row = document.createElement("div");
-        row.className = "row enter";
-        row.style.animationDelay = `${i * 70}ms`;
-        row.addEventListener("animationend", (ev) => {
-          if (ev.animationName === "tdc-in") row.classList.remove("enter");
-        });
-        // another animation (e.g. "imminent") can replace tdc-in before it ends
-        setTimeout(() => row.classList.remove("enter"), 700 + i * 70);
-        this._rows.set(k, row);
-      }
-      row._d = d;
-      row._exp = Date.parse(d.expected);
-      row.style.setProperty("--line-color", d.color || "var(--tdc-accent)");
-      row.style.setProperty("--line-text", d.text_color || "#fff");
-      row.classList.toggle("canceled", !!d.canceled);
-      row.classList.toggle("rt", !!d.realtime && !d.canceled);
-      row.classList.toggle("late", !!d.realtime && (d.delay ?? 0) >= 60);
-      const tap = this._config.trip_dialog !== false && !!d.trip_id;
-      row.classList.toggle("tap", tap);
-      if (tap) { row.tabIndex = 0; row.setAttribute("role", "button"); }
-      const mode = ["metro", "tram"].includes(d.mode) ? d.mode : "bus";
-      let status;
-      if (d.canceled) status = `<span class="chip cx">${t.canceled}</span>`;
-      else if (d.realtime) {
-        const dl = d.delay ?? 0, m = Math.round(Math.abs(dl) / 60);
-        const chip = Math.abs(dl) < 60 ? `<span class="chip ok">${t.ontime}</span>`
-          : dl > 0 ? `<span class="chip late">+${m} ${t.min}</span>`
-          : `<span class="chip early">−${m} ${t.min}</span>`;
-        status = `<span class="live"><span class="dot"></span>${t.live}</span>${chip}`;
-      } else {
-        status = `<span class="tt"><ha-icon icon="mdi:clock-outline"></ha-icon>${t.timetable}</span>`;
-      }
-      const sched = d.scheduled ? new Date(d.scheduled).toLocaleTimeString(this._hass?.locale?.language || undefined,
-        { hour: "2-digit", minute: "2-digit" }) : "";
-      const html = `<div class="badge ${mode}">${tdcEsc(d.line)}</div>
-        <div class="mid"><div class="dest">${tdcEsc(d.destination)}</div>
-          <div class="meta">${status}${sched ? `<span>${t.sched} ${sched}</span>` : ""}</div></div>
-        <div class="cd"><span class="big"></span><span class="unit"></span><span class="small"></span></div>
-        ${this._layout === "board" ? `<div class="binfo">${this._boardInfo(d)}</div>` : ""}
-        ${i === 0 ? '<div class="bar"><i></i></div>' : ""}`;
-      if (row._html !== html) { row.innerHTML = html; row._html = html; }
-      list.appendChild(row); // (re)orders existing rows, appends new ones
-    });
-    for (const [k, row] of this._rows) {
-      if (keep.has(k)) continue;
-      this._rows.delete(k);
-      row.classList.remove("enter");
-      row.classList.add("leave");
-      list.insertBefore(row, list.firstChild);
-      setTimeout(() => row.remove(), 480);
+  _renderError(s) {
+    this._card.innerHTML = `<div class="tc-empty tc-empty--error" role="alert"><div class="tc-empty__icon">${I.warning}</div>
+      <p class="tc-empty__title">${esc(s.entityMissing)}</p><p class="tc-empty__text"><code>${esc(this._ids?.dep || this._config.entity)}</code></p></div>`;
+    this._built = false; // rebuild the skeleton when the entity appears
+  }
+
+  /* ---------- departure board ---------- */
+  _renderBoard(st, deps, status, alerts, now) {
+    const c = this._config, lang = this._lang, s = this._s, r = this.shadowRoot;
+    const sub = status === "feed_down" ? `${I.feedOff}${esc(s.feedDown)} · ${esc(s.feedDownSub)}`
+      : deps.some((x) => x.realtime) ? `${LIVE_ANIM}${esc(s.live)}` : `${I.clock}${esc(s.scheduled)}`;
+    const headHtml = `<div class="tc-head__icon">${I.stop}</div>
+      <div><h2 class="tc-board__title">${esc(c.title || st.attributes.stop_name || "Tisséo")}</h2><p class="tc-board__sub">${sub}</p></div>
+      <time class="tc-board__clock"></time>`;
+    if (this._headHtml !== headHtml) {
+      this._head.innerHTML = headHtml; this._headHtml = headHtml;
+      this._ticker.track(this._head.querySelector("time"), (el, n, last) => { const v = hhmm(n, lang); if (v !== last) el.textContent = v; return v; });
     }
-    if (!deps.length && !list.querySelector(".empty")) {
-      const e = document.createElement("div");
-      e.className = "empty";
-      e.textContent = t.nodep;
-      list.appendChild(e);
+    const groups = groupDepartures(deps, c.group !== false).slice(0, c.max_departures);
+    this._emptyEl.hidden = groups.length > 0;
+    if (!groups.length) this._emptyEl.innerHTML = `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(s.noDep)}</p>`;
+    const isMetro = (g) => g.next.mode === "metro";
+    const panels = { metro: groups.filter(isMetro), other: groups.filter((g) => !isMetro(g)) };
+    const both = panels.metro.length > 0 && panels.other.length > 0;
+    r.querySelector(".tc-board__cols").classList.toggle("tc-board__cols--split", both);
+    for (const [name, list] of Object.entries(panels)) {
+      const sec = r.querySelector(`[data-panel="${name}"]`);
+      sec.hidden = !list.length;
+      const h3 = sec.querySelector(".tc-board__panel-title");
+      h3.textContent = both ? s[name] : ""; h3.hidden = !both;
+      sec.querySelector(".tc-bhead").innerHTML = `<span>${esc(s.line)}</span><span>${esc(s.destination)}</span><span>${esc(s.departs)}</span><span>${esc(s.thenCol)}</span>`;
+      reconcile(sec.querySelector(".tc-brows"), list, {
+        key: (g) => g.key, reduceMotion: true,
+        create: (g) => this._boardRow(g, now, alerts),
+        update: (row, g) => this._patch(row, g, alerts, () => this._boardRow(g, now, alerts)),
+      });
+    }
+    // Footer: one disruption at a time, paged every 8 s (static under reduced motion), never a marquee.
+    const foot = r.querySelector(".tc-board__foot");
+    foot.hidden = !alerts.length || c.alerts === "off";
+    if (foot.hidden) { clearInterval(this._pager); this._pager = null; return; }
+    this._boardAlerts = alerts;
+    this._pageIdx = Math.min(this._pageIdx || 0, alerts.length - 1);
+    const paint = () => {
+      const list = this._boardAlerts, a = list[this._pageIdx], n = list.length;
+      const dots = list.slice(0, 5).map((_, i) => `<i class="${i === this._pageIdx % 5 ? "on" : ""}"></i>`).join("");
+      foot.innerHTML = `<span style="color:var(--tc-sev-${a.severity})">${I[a.severity]}</span>
+        <span class="tc-board__msg">${this._lineBadges(a, 2)}<span>${esc(a.title)}</span></span>
+        <button class="tc-pager" type="button" aria-label="${this._pageIdx + 1} / ${n}">${dots}<span>${this._pageIdx + 1} / ${n}</span></button>`;
+      foot.querySelector(".tc-pager").addEventListener("click", () => { this._pageIdx = (this._pageIdx + 1) % this._boardAlerts.length; paint(); });
+    };
+    paint();
+    if (!this._pager && alerts.length > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this._pager = setInterval(() => {
+        if (foot.matches(":hover") || !this._boardAlerts?.length) return;
+        this._pageIdx = (this._pageIdx + 1) % this._boardAlerts.length; paint();
+      }, 8000);
     }
   }
 
-  _boardInfo(d) {
-    const t = this._t;
-    if (d.canceled) return `<span class="cx">${t.canceled}</span>`;
-    if (!d.realtime) return t.timetable;
-    const dl = d.delay ?? 0, m = Math.round(Math.abs(dl) / 60);
-    if (Math.abs(dl) < 60) return `<span class="ok">${t.ontime}</span>`;
-    return dl > 0 ? `<span class="late">+${m} ${t.min}</span>` : `<span class="ok">−${m} ${t.min}</span>`;
+  _boardRow(g, now, alerts) {
+    const c = this._config, lang = this._lang, s = this._s, x = g.next;
+    const dl = delayInfo(x, lang);
+    const skipped = g.canceled.find((y) => y.ms < x.ms);
+    let note = "";
+    if (dl && dl.kind !== "canceled") note = `<span class="tc-delay tc-delay--${dl.kind}">${esc(dl.text)}</span>`;
+    else if (skipped && !x.canceled) note = `<span class="tc-cancel">${hhmm(Date.parse(skipped.scheduled || skipped.expected), lang)} ${esc(s.canceled.toLowerCase())}</span>`;
+    else if (!x.realtime && !x.canceled) note = `${I.clock}<span>${esc(s.scheduled)}</span>`;
+    const nx = g.then[0];
+    let thenTxt = "";
+    if (nx) { const m = Math.floor((nx.ms - now) / 60000); thenTxt = m >= 60 ? hhmm(nx.ms, lang) : `${m} ${s.min}`; }
+    const time = x.canceled
+      ? `<div class="tc-brow__time tc-brow__time--canceled">${esc(s.canceled)}</div>`
+      : `<div class="tc-brow__time tc-time" data-expected="${x.ms}">${x.realtime ? LIVE_SVG : ""}<b class="tc-time__num"></b><small class="tc-time__unit"></small></div>`;
+    const tap = c.trip_dialog !== false && !!x.trip_id;
+    const tpl = document.createElement("template");
+    tpl.innerHTML = `<div class="tc-brow${x.canceled ? " is-canceled" : ""}${tap ? " is-tap" : ""}" role="row"${tap ? ' tabindex="0"' : ""} aria-label="${esc(ariaLabel(g, now, lang))}">
+      ${badgeHTML(x, "xl", c.badge_contrast)}
+      <div role="cell"><div class="tc-brow__dest">${esc(x.destination)}</div>${note ? `<div class="tc-brow__note">${note}</div>` : ""}</div>
+      ${time}
+      <div class="tc-brow__then" role="cell">${thenTxt}</div></div>`;
+    const row = tpl.content.firstElementChild;
+    row._group = g;
+    row._sig = this._rowSig(g, alerts);
+    if (tap) {
+      row.addEventListener("click", () => this._openTrip(row._group.next));
+      row.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this._openTrip(row._group.next); } });
+    }
+    const tEl = row.querySelector(".tc-time");
+    if (tEl) this._ticker.track(tEl, renderTime(lang));
+    return row;
   }
 
-  _fmt(iso) {
-    return iso ? new Date(iso).toLocaleTimeString(this._hass?.locale?.language || undefined,
-      { hour: "2-digit", minute: "2-digit" }) : "";
-  }
-
-  _closeTrip() {
-    this._dlg?.remove();
-    this._dlg = null;
-    if (this._dlgKey) { window.removeEventListener("keydown", this._dlgKey); this._dlgKey = null; }
-  }
-
-  async _openTrip(d) {
-    this._closeTrip();
-    const t = this._t, mode = ["metro", "tram"].includes(d.mode) ? d.mode : "bus";
-    const dlg = document.createElement("div");
-    dlg.className = "dlg";
-    dlg.style.setProperty("--line-color", d.color || "var(--tdc-accent)");
-    dlg.style.setProperty("--line-text", d.text_color || "#fff");
-    dlg.innerHTML = `<div class="box" role="dialog" aria-modal="true">
-        <div class="dh"><div class="badge ${mode}">${tdcEsc(d.line)}</div>
-          <div class="t"><div class="h1">→ ${tdcEsc(d.destination)}</div><div class="h2"></div></div>
-          <button class="x" aria-label="${t.close}" title="${t.close}">×</button></div>
-        <div class="body"><div class="msg">${t.loading}</div></div></div>`;
-    dlg.addEventListener("click", (ev) => { if (ev.target === dlg || ev.target.closest(".x")) this._closeTrip(); });
-    this._dlgKey = (ev) => { if (ev.key === "Escape") this._closeTrip(); };
-    window.addEventListener("keydown", this._dlgKey);
-    this.shadowRoot.appendChild(dlg);
-    this._dlg = dlg;
-    dlg.querySelector(".x").focus();
+  /* ---------- trip dialog (native <dialog>: top layer, Esc closes, focus kept inside) ---------- */
+  async _openTrip(dep) {
+    if (!dep || !dep.trip_id || this._config.trip_dialog === false) return;
+    const s = this._s, lang = this._lang, c = this._config, dlg = this._dialog;
+    const dark = !!this._hass.themes?.darkMode;
+    dlg.dataset.theme = dark ? "dark" : "light";
+    dlg.setAttribute("style", lineVars(dep, dark ? "#1C1C1C" : "#FFFFFF", c.badge_contrast));
+    const head = (sub) => `<header class="tc-dlg__head">${badgeHTML(dep, "l", c.badge_contrast)}
+        <div><h2 class="tc-dlg__title" id="tc-dlg-title">${esc(dep.destination)}</h2><p class="tc-dlg__sub">${sub}</p></div>
+        <button class="tc-iconbtn" type="button" aria-label="${esc(s.close)}" autofocus>${I.close}</button></header>`;
+    const bindClose = () => dlg.querySelector(".tc-iconbtn").addEventListener("click", () => dlg.close());
+    dlg.innerHTML = `${head(esc(s.loading))}<div class="tc-dlg__body"><div class="tc-empty"><span class="tc-skel" style="width:60%"></span><span class="tc-skel" style="width:40%"></span></div></div>`;
+    bindClose();
+    if (!dlg.open) { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
+    const seq = (this._tripSeq = (this._tripSeq || 0) + 1);
     let res;
     try {
-      const req = { type: "tisseo/trip_stops", trip_id: d.trip_id };
-      if (d.stop_id || this._stopId) req.stop_id = d.stop_id || this._stopId;
-      if (d.scheduled) req.scheduled = d.scheduled;
+      const req = { type: "tisseo/trip_stops", trip_id: dep.trip_id };
+      if (dep.stop_id || this._stopId) req.stop_id = dep.stop_id || this._stopId;
+      if (dep.scheduled) req.scheduled = dep.scheduled;
       res = await this._hass.callWS(req);
     } catch (err) {
-      if (this._dlg === dlg) dlg.querySelector(".body").innerHTML =
-        `<div class="msg">${t.tripErr}${err?.message ? `<br><small>${tdcEsc(err.message)}</small>` : ""}</div>`;
+      if (seq !== this._tripSeq) return;
+      dlg.querySelector(".tc-dlg__body").innerHTML = `<div class="tc-empty"><div class="tc-empty__icon">${I.warning}</div><p class="tc-empty__title">${esc(s.tripErr)}</p>${err?.message ? `<p class="tc-empty__text">${esc(err.message)}</p>` : ""}</div>`;
       return;
     }
-    if (this._dlg !== dlg) return;
+    if (seq !== this._tripSeq) return;
     const stops = res.stops || [];
-    dlg.querySelector(".h2").textContent = `${stops.length} ${t.stops}` +
-      (res.realtime ? ` · ${t.live}` : ` · ${t.timetable}`) + (res.canceled ? ` · ${t.canceled}` : "");
-    const items = stops.map((s, i) => {
-      const shown = s.expected || s.scheduled;
-      const dl = s.delay ?? 0, m = Math.round(Math.abs(dl) / 60);
-      const chip = s.skipped ? `<span class="chip cx">${t.skipped}</span>`
-        : s.realtime && Math.abs(dl) >= 60 ? `<span class="chip ${dl > 0 ? "late" : "early"}">${dl > 0 ? "+" : "−"}${m}</span>`
-        : s.realtime ? '<span class="live"><span class="dot"></span></span>' : "";
-      const orig = s.realtime && Math.abs(dl) >= 60 ? `<s>${this._fmt(s.scheduled)}</s>` : "";
-      const cls = [s.past ? "past" : "", s.is_selected ? "sel" : "", i === res.next_index ? "next" : "", s.skipped ? "skip" : ""].join(" ");
-      return `<li class="${cls}"><span class="tm">${this._fmt(shown)}${orig}</span><span class="rail"></span>` +
-        `<span class="nm">${tdcEsc(s.name)}</span><span class="ch">${chip}</span></li>`;
-    }).join("");
-    dlg.querySelector(".body").innerHTML = stops.length ? `<ol>${items}</ol>` : `<div class="msg">${t.tripErr}</div>`;
-    dlg.querySelector("li.sel")?.scrollIntoView({ block: "center" });
-  }
-
-  _renderAlerts(st, deps) {
-    const tk = this._el.ticker;
-    let heads = [];
-    if (this._config.show_alerts && st) {
-      const lines = new Set(deps.map((d) => d.route_id).filter(Boolean));
-      const alerts = st.attributes.alerts || [];
-      // line alerts for lines shown first, then the rest
-      const score = (al) => (al.lines || []).some((l) => lines.has(l)) ? 0 : al.network_wide ? 2 : 1;
-      heads = alerts.slice().sort((x, y) => score(x) - score(y)).map((al) => al.header).filter(Boolean);
-      if (!heads.length) heads = st.attributes.headlines || [];
-    }
-    const sig = heads.join("|");
-    if (sig === this._alertSig) return;
-    this._alertSig = sig;
-    tk.hidden = !heads.length;
-    if (!heads.length) return;
-    this._el.n.textContent = String(heads.length);
-    const text = heads.map(tdcEsc).join("  •  ");
-    this._el.track.innerHTML = `<span>${text}</span><span aria-hidden="true">${text}</span>`;
-    this._el.track.style.setProperty("--dur", `${Math.max(12, Math.round(text.length * 0.11))}s`);
-  }
-
-  _tick() {
-    if (!this._built || !this._hass) return;
-    const now = Date.now(), t = this._t;
-    this._el.clock.textContent = new Date(now).toLocaleTimeString(this._hass?.locale?.language || undefined,
-      { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    let idx = 0;
-    for (const row of this._el.list.querySelectorAll(".row:not(.leave)")) {
-      const rem = Math.round((row._exp - now) / 1000);
-      const big = row.querySelector(".big"), unit = row.querySelector(".unit"), small = row.querySelector(".small");
-      if (!big) continue;
-      let b, u, s;
-      if (rem <= 0) { b = t.now; u = ""; s = ""; }
-      else if (rem < 3600) {
-        const m = Math.floor(rem / 60), sec = rem % 60;
-        b = m < 1 ? "<1" : String(m); u = t.min; s = `${m}:${String(sec).padStart(2, "0")}`;
-      } else {
-        b = new Date(row._exp).toLocaleTimeString(this._hass?.locale?.language || undefined, { hour: "2-digit", minute: "2-digit" });
-        u = ""; s = "";
-      }
-      if (big.textContent !== b) big.textContent = b;
-      if (unit.textContent !== u) unit.textContent = u;
-      if (small.textContent !== s) small.textContent = s;
-      row.classList.toggle("imminent", rem <= 60 && rem > -60 && !row._d?.canceled);
-      // departed more than a minute ago: hide until the next sensor refresh drops it
-      row.classList.toggle("gone", rem < -60);
-      if (rem < -60) continue;
-      if (idx === 0) {
-        const bar = row.querySelector(".bar > i");
-        if (bar) bar.style.width = `${Math.max(2, Math.min(100, (1 - rem / 600) * 100)).toFixed(1)}%`;
-      }
-      idx++;
-    }
+    const sel = Math.max(0, stops.findIndex((p) => p.is_selected));
+    const before = stops.slice(0, sel), ahead = stops.slice(sel);
+    const fmt = (iso) => (iso ? hhmm(Date.parse(iso), lang) : "");
+    const live = !!res.realtime;
+    const sub = `${live ? LIVE_SVG + esc(s.live) : I.clock + esc(s.scheduled)} · ${stops.length} ${esc(s.stops)}${res.canceled ? ` · <span class="tc-cancel">${esc(s.canceled)}</span>` : ""}`;
+    const stopLi = (p, isEnd, isBefore) => {
+      const t = fmt(p.expected || p.scheduled), sc = fmt(p.scheduled);
+      const here = !!p.is_selected;
+      const cls = ["tc-stop", here ? "tc-stop--here" : "", isEnd ? "tc-stop--end" : "", isBefore || p.past ? "tc-stop--past" : ""].filter(Boolean).join(" ");
+      const late = p.realtime && Math.abs(p.delay ?? 0) >= DELAY_THRESHOLD_S;
+      const tag = p.skipped ? `<span class="tc-cancel">${esc(s.skipped)}</span>`
+        : late ? `<span class="tc-delay tc-delay--${p.delay > 0 ? "late" : "early"}">${p.delay > 0 ? "+" : "−"}${Math.round(Math.abs(p.delay) / 60)} ${s.min}</span>` : "";
+      return `<li class="${cls}"${here ? ' aria-current="location"' : ""}>
+        <span class="tc-stop__time">${esc(t)}${sc && sc !== t ? `<s>${esc(sc)}</s>` : ""}</span><span class="tc-stop__rail"></span>
+        <span class="tc-stop__name">${here ? `<span class="tc-stop__eyebrow">${esc(s.youAreHere)}</span>` : ""}${esc(p.name)}</span><span>${tag}</span></li>`;
+    };
+    const foot = live ? "" : dep.mode === "metro" ? s.metroNoLive
+      : dep.live_coverage === "feed_unavailable" ? `${s.feedDown} · ${s.feedDownSub}` : s.tripNoLive;
+    dlg.innerHTML = `${head(sub)}
+      <div class="tc-dlg__body"><ol class="tc-stops">
+        ${before.length ? `<li class="tc-stops__wrap"><button class="tc-stops__more" type="button" aria-expanded="false"><span></span><span class="tc-stop__rail"></span><span>${esc(s.previousStops(before.length))}</span></button></li>` : ""}
+        ${ahead.map((p, i) => stopLi(p, i === ahead.length - 1, false)).join("")}
+      </ol></div>
+      ${foot ? `<footer class="tc-dlg__foot"><span>${esc(foot)}</span></footer>` : ""}`;
+    bindClose();
+    const more = dlg.querySelector(".tc-stops__more");
+    if (more) more.addEventListener("click", () => { more.closest("li").outerHTML = before.map((p) => stopLi(p, false, true)).join(""); });
+    dlg.querySelector(".tc-stop--here")?.scrollIntoView({ block: "center" });
   }
 }
 
-function tdcSchema(lines) {
+/* ---------- visual editor: ha-form schema (HA-native, offline) ---------- */
+const LABELS = {
+  fr: { entity: "Arrêt (n'importe quel capteur de l'arrêt)", title: "Titre (facultatif)", layout: "Disposition", max_departures: "Lignes affichées",
+        group: "Regrouper par direction", hero: "Mettre en avant le prochain départ", hero_line: "Direction mise en avant",
+        leave_entity: "Capteur « Partir dans » (auto)", filter_lines: "Uniquement ces lignes", filter_destinations: "Destination contient",
+        show_filters: "Filtres (puces) dans la carte", trip_dialog: "Toucher une ligne : arrêts du trajet",
+        alerts: "Perturbations", timetable_notice: "Avertir des changements d'horaires", show_clock: "Horloge",
+        badge_contrast: "Contraste des pastilles", board_theme: "Thème du tableau" },
+  en: { entity: "Stop (any sensor of the stop)", title: "Title (optional)", layout: "Layout", max_departures: "Rows shown",
+        group: "Group by direction", hero: "Highlight the next departure", hero_line: "Highlighted direction",
+        leave_entity: "“Leave in” sensor (auto)", filter_lines: "Only these lines", filter_destinations: "Destination contains",
+        show_filters: "Filter chips in the card", trip_dialog: "Tap a row for the trip's stops",
+        alerts: "Disruptions", timetable_notice: "Timetable change notice", show_clock: "Clock",
+        badge_contrast: "Badge contrast", board_theme: "Board theme" },
+};
+function tdcSchema(lang, lines, directions) {
+  const fr = lang === "fr";
   return [
     { name: "entity", required: true, selector: { entity: { domain: "sensor", integration: "tisseo" } } },
     { name: "title", selector: { text: {} } },
     { type: "grid", name: "", schema: [
       { name: "layout", selector: { select: { mode: "dropdown", options: [
-        { value: "default", label: "Default" }, { value: "compact", label: "Compact" },
-        { value: "board", label: "Departure board" }] } } },
-      { name: "max", selector: { number: { min: 1, max: 10, mode: "box" } } },
+        { value: "default", label: fr ? "Standard" : "Default" },
+        { value: "compact", label: fr ? "Compacte" : "Compact" },
+        { value: "board", label: fr ? "Tableau des départs" : "Departure board" }] } } },
+      { name: "max_departures", selector: { number: { min: 1, max: 12, mode: "box" } } },
     ] },
     { type: "grid", name: "", schema: [
-      { name: "show_alerts", selector: { boolean: {} } },
-      { name: "show_filters", selector: { boolean: {} } },
+      { name: "group", selector: { boolean: {} } },
+      { name: "hero", selector: { boolean: {} } },
       { name: "trip_dialog", selector: { boolean: {} } },
+      { name: "show_filters", selector: { boolean: {} } },
     ] },
     { name: "filter_lines", selector: { select: { multiple: true, custom_value: true, mode: "dropdown",
       options: lines.map((l) => ({ value: l, label: l })) } } },
     { name: "filter_destinations", selector: { text: { multiple: true } } },
+    { type: "expandable", name: "", title: fr ? "Mon trajet" : "My trip", schema: [
+      { name: "hero_line", selector: { select: { mode: "dropdown", options: directions } } },
+      { name: "leave_entity", selector: { entity: { domain: "sensor", integration: "tisseo" } } },
+    ] },
+    { type: "grid", name: "", schema: [
+      { name: "alerts", selector: { select: { mode: "dropdown", options: [
+        { value: "banner", label: fr ? "Bandeau replié" : "Collapsed banner" },
+        { value: "count", label: fr ? "Compteur seul" : "Count only" },
+        { value: "off", label: fr ? "Masquées" : "Hidden" }] } } },
+      { name: "timetable_notice", selector: { boolean: {} } },
+      { name: "show_clock", selector: { boolean: {} } },
+    ] },
+    { type: "expandable", name: "", title: fr ? "Accessibilité et affichage avancé" : "Accessibility & advanced", schema: [
+      { name: "badge_contrast", selector: { select: { mode: "dropdown", options: [
+        { value: "auto", label: fr ? "Automatique (AA)" : "Automatic (AA)" },
+        { value: "brand", label: fr ? "Couleurs Tisséo" : "Tisséo colours" }] } } },
+      { name: "board_theme", selector: { select: { mode: "dropdown", options: [
+        { value: "dark", label: fr ? "Toujours sombre" : "Always dark" },
+        { value: "auto", label: fr ? "Suivre Home Assistant" : "Follow Home Assistant" }] } } },
+    ] },
   ];
 }
-const TDC_LABELS = {
-  en: { entity: "Tisséo departure sensor (any sensor of the stop)", title: "Title", max: "Max departures",
-        show_alerts: "Alerts ticker", layout: "Layout", show_filters: "Filter chips in the card",
-        trip_dialog: "Tap a row for the trip's stops", filter_lines: "Only these lines",
-        filter_destinations: "Destination contains" },
-  fr: { entity: "Capteur de départs Tisséo (n'importe quel capteur de l'arrêt)", title: "Titre",
-        max: "Nombre de départs", show_alerts: "Bandeau d'alertes", layout: "Disposition",
-        show_filters: "Filtres (puces) dans la carte", trip_dialog: "Toucher une ligne : arrêts du trajet",
-        filter_lines: "Uniquement ces lignes", filter_destinations: "Destination contient" },
-};
 
 class TisseoDeparturesCardEditor extends HTMLElement {
-  setConfig(config) { this._config = config; this._render(); }
+  setConfig(config) { this._config = { ...config }; this._render(); }
   set hass(hass) { this._hass = hass; this._render(); }
-  _lines() {
-    const st = this._hass?.states[this._config?.entity];
-    const set = new Set((st?.attributes?.upcoming || []).map((x) => String(x.line)));
-    for (const l of this._config?.filter_lines || []) set.add(String(l));
-    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }
   _render() {
     if (!this._hass || !this._config) return;
-    const lang = (this._hass.locale?.language || this._hass.language || "en").slice(0, 2);
-    const labels = TDC_LABELS[lang] || TDC_LABELS.en;
+    const lang = (this._hass.locale?.language || this._hass.language || "en").slice(0, 2) === "fr" ? "fr" : "en";
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.addEventListener("value-changed", (ev) => {
-        const cfg = { ...this._config, ...ev.detail.value };
+        const prev = this._config;
+        const cfg = { ...prev, ...ev.detail.value };
         for (const k of ["filter_lines", "filter_destinations"]) {
-          if (Array.isArray(cfg[k]) && !cfg[k].filter((x) => x !== "").length) delete cfg[k];
+          if (Array.isArray(cfg[k]) && !cfg[k].filter((v) => v !== "").length) delete cfg[k];
         }
+        for (const k of ["title", "hero_line", "leave_entity"]) if (cfg[k] === "" || cfg[k] == null) delete cfg[k];
+        // keep the YAML short: values equal to the defaults are not written unless the user had set them
+        for (const [k, v] of Object.entries(DEFAULTS)) if (cfg[k] === v && !(k in prev)) delete cfg[k];
         if (cfg.layout === "default") delete cfg.layout;
-        if (cfg.title === "") delete cfg.title;
+        if ("max_departures" in cfg) delete cfg.max;          // 1.0 name
+        if ("alerts" in cfg) delete cfg.show_alerts;           // 1.0 name
         this._config = cfg;
-        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: cfg },
-          bubbles: true, composed: true }));
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: cfg }, bubbles: true, composed: true }));
       });
       this.appendChild(this._form);
     }
+    const st = this._hass.states[this._config.entity];
+    const ups = st?.attributes?.upcoming || [];
+    const lines = [...new Set(ups.map((u) => String(u.line)).concat((this._config.filter_lines || []).map(String)))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const directions = [{ value: "", label: lang === "fr" ? "Automatique" : "Automatic" },
+      ...[...new Set(ups.map((u) => `${u.line}|${u.destination}`))].map((k) => ({ value: k, label: k.replace("|", " → ") }))];
+    const labels = LABELS[lang];
     this._form.computeLabel = (sch) => labels[sch.name] || sch.name;
     this._form.hass = this._hass;
-    this._form.data = { max: 5, show_alerts: true, layout: "default", show_filters: false, trip_dialog: true,
-      ...this._config };
-    this._form.schema = tdcSchema(this._lines());
+    const data = { ...DEFAULTS, ...this._config };
+    if (this._config.max_departures == null && this._config.max != null) data.max_departures = Number(this._config.max);
+    if (this._config.alerts == null && this._config.show_alerts === false) data.alerts = "off";
+    if (data.hero === "auto") data.hero = (data.layout || "default") === "default";
+    this._form.data = data;
+    this._form.schema = tdcSchema(lang, lines, directions);
   }
 }
 
@@ -712,10 +1475,11 @@ if (!window.__tisseoCardTimer) {
   window.__tisseoCardTimer = setInterval(() => { tdcRegister(); if (++n > 120) clearInterval(window.__tisseoCardTimer); }, 250);
 }
 window.customCards = window.customCards || [];
-if (!window.customCards.some((c) => c.type === "tisseo-departures-card")) {
+if (!window.customCards.some((x) => x.type === "tisseo-departures-card")) {
   window.customCards.push({ type: "tisseo-departures-card", name: "Tisséo departures",
-    description: "Animated next departures (live countdown, delays, alerts ticker) for a Tisséo stop.",
+    description: "Next departures for a Tisséo stop: live countdowns, delays, disruptions, leave-now, departure board.",
     preview: true, documentationURL: "https://github.com/your-github-user/tisseo-ha" });
   console.info(`%c TISSEO-DEPARTURES-CARD %c v${TDC_VERSION} `,
     "background:#db001b;color:#fff;font-weight:700", "background:#ffdd00;color:#000");
 }
+})();

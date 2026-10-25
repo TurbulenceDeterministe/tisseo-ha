@@ -9,6 +9,6 @@ Nothing has been published. Everything below is prepared locally.
    - `hacs.yaml` (hacs/action, category `integration`).
    - `tests.yaml` (pytest + `node --check` on the card).
 4. **Brand.** `custom_components/tisseo/brand/icon.png` (256²) and `icon@2x.png` (512²) are included. HA ≥ 2026.3 reads brand images from the integration itself, and home-assistant/brands no longer accepts custom integrations. Known caveat: some HACS versions still show a placeholder icon in the HACS dashboard (hacs/integration#5171, #5223). This is cosmetic.
-5. **Release.** Tag `v1.0.0` and create a GitHub **release** (not only a tag). The version must match `manifest.json`.
+5. **Release.** Tag `v1.1.0` and create a GitHub **release** (not only a tag). The version must match `manifest.json`.
 6. `hacs.json`: name, `homeassistant: 2025.1.0` minimum, `render_readme`.
 7. Optional: open a PR on `hacs/default` to add the repository to the default store, once the action passes.

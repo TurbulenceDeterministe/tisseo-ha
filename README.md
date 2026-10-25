@@ -15,7 +15,7 @@ Next departures with real-time data when it is published, plus disruptions, jour
 
 **Optional:** you can add *your own* key for the official Tisséo API v2. Request it from `opendata@tisseo.fr`. The integration never embeds or extracts any key. See [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md) for what the official app uses and why none of it is reused.
 
-![Default layout](docs/images/v1_default.png)
+![Default layout](docs/images/v11_default.png)
 
 ## Install
 - **HACS:** ⋮ → *Custom repositories* → add this repository with category **Integration**. Install *Tisséo*, then restart.
@@ -72,25 +72,43 @@ Blueprints are in `blueprints/automation/tisseo/`: **disruption_notify**, **dela
 - **WebSocket:** `tisseo/trip_stops` does the same. The card uses it to open the trip dialog.
 
 ## Dashboard card
-The card is loaded automatically, so there is no resource to add. It has a visual editor in the card picker under "Tisséo departures".
+The card is loaded automatically, so there is no resource to add. It has a visual editor in the card picker under "Tisséo departures". It is one self-contained file (no build step, no external fonts or scripts) and follows the Home Assistant theme, including dark mode.
 
 ```yaml
 type: custom:tisseo-departures-card
-entity: sensor.tisseo_jeanne_d_arc_departure_1
+entity: sensor.tisseo_jeanne_d_arc_departure_1   # any sensor of the stop
 layout: default          # default | compact | board
-max: 5
-show_alerts: true
-show_filters: true       # line / destination chips; the selection is saved per card in this browser
+max_departures: 6        # rows (directions when grouped); `max` from 1.0 still works
+group: true              # one row per line + direction, the next ones shown as "then"
+hero: auto               # big "next departure" block (auto = default layout only)
+hero_line: "B|Borderouge"  # optional: pin the hero to one direction
+alerts: banner           # banner | count | off  (`show_alerts: false` from 1.0 still works)
+timetable_notice: true   # notice when tomorrow's timetable differs
+show_filters: true       # line / direction chips; the selection is saved per card in this browser
 filter_lines: [B, L1]    # fixed filters (optional)
 filter_destinations: [Ramonville]
 trip_dialog: true        # tap a row to see the trip's stops
+show_clock: false
+badge_contrast: auto     # auto (WCAG AA text on line colours) | brand (GTFS colours as-is)
+board_theme: dark        # dark | auto (follow Home Assistant)
 ```
 
-| compact | board | trip dialog |
-|---|---|---|
-| ![compact](docs/images/v1_compact.png) | ![board](docs/images/v1_board.png) | ![trip](docs/images/v1_trip_dialog.png) |
+What the card shows, and where it comes from:
+- **Countdowns** from `expected` of each departure in `upcoming`, ticking every second (paused when the card is off screen or the tab is hidden). The live icon is shown only when `realtime` is true; scheduled times get a clock icon.
+- **Delay chips** (`+3 min` / `−2 min`) from the per-departure delay, only from 90 s (GTFS-RT jitter is hidden). Canceled trips are struck through.
+- **Leave now:** when the stop has a walking time, the hero uses the integration's "leave in" sensor (walking time + buffer) and says "Leave in 4 min · 5 min walk" or "Leave now".
+- **Disruptions** from the stop's disruptions sensor. Tisséo publishes no severity, so it is derived from the GTFS-RT effect (no service → severe; detour, moved stop, reduced service → warning; else info). Line-specific alerts also flag the matching rows.
+- **Notices:** live data unavailable (feed health `down`, or `live_coverage: feed_unavailable`), stale data, and the "timetable change tomorrow" binary sensor.
+- **Board:** a dark departure board; metro and bus/tram split into two panels on wide screens; disruptions page one at a time every 8 s.
+- **Accessibility:** badge shapes differ by mode (metro circle, tram rounded square, Linéo pill, bus rectangle), every row has a spoken label, and reduced motion, high contrast and forced colours are respected.
 
-The visual editor: ![editor](docs/images/v1_editor.png)
+| default | compact | board |
+|---|---|---|
+| ![default](docs/images/v11_default.png) | ![compact](docs/images/v11_compact.png) | ![board](docs/images/v11_board.png) |
+
+| dark theme | trip dialog | visual editor |
+|---|---|---|
+| ![dark](docs/images/v11_dark.png) | ![trip](docs/images/v11_trip_dialog.png) | ![editor](docs/images/v11_editor.png) |
 
 ## Index size (measured on the 2026-10 GTFS, x86 box)
 | Index | Build | Size |
@@ -119,6 +137,12 @@ python scripts/set_github_user.py <user>       # set the GitHub owner (placehold
 ```
 
 ## Changelog
+### 1.1.0
+- **New card design** (v2), integrated into the bundled card as one file: a "next departure" hero with leave-now, departures grouped by direction with "then" times, delay chips with a 90 s threshold, mode-specific badge shapes with automatic AA contrast, a collapsed disruptions banner, notices for missing live data and tomorrow's timetable change, a dark departure board with metro / bus & tram panels and a paged disruptions footer, and a native `<dialog>` trip timeline.
+- New card options: `max_departures`, `group`, `hero`, `hero_line`, `leave_entity`, `alerts`, `timetable_notice`, `show_clock`, `badge_contrast`, `board_theme`. The 1.0 options keep working (`max`, `show_alerts`, filters, `trip_dialog`).
+- One shared ticker per card (second-aligned, paused off screen), keyed row updates, and a regroup every 30 s so departed trips drop out between sensor updates.
+- The card follows Home Assistant's 12 h / 24 h time setting.
+
 ### 1.0.0
 - New entry types: **nearby stops**, **journeys with one transfer**, **VélôToulouse stations** and **P+R**.
 - New stop entities: **leave now / leave in** and **timetable change tomorrow**.
