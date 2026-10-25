@@ -36,6 +36,12 @@ class FeedHealth:
     trips: int = 0  # how many times the breaker opened
     attempts: int = 0
 
+    def seed(self, ts: float) -> None:
+        """Mark a success that happened earlier (e.g. a cached feed checked at ``ts``)."""
+        if not self.results:
+            self.results.append(True)
+            self.last_success = ts
+
     def record(self, ok: bool, error: str | None = None) -> None:
         now = self.clock()
         self.attempts += 1

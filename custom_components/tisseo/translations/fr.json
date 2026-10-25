@@ -2,51 +2,214 @@
   "config": {
     "step": {
       "user": {
+        "title": "Tisséo",
+        "description": "Que voulez-vous ajouter ?",
+        "menu_options": {
+          "stop_search": "Un arrêt (recherche par nom ou identifiant)",
+          "nearby": "Un arrêt proche de mon domicile (10 plus proches)",
+          "journey": "Un trajet (origine → destination)",
+          "bike": "Une station VélôToulouse",
+          "park_ride": "Un parking relais (P+R)"
+        }
+      },
+      "stop_search": {
         "title": "Arrêt Tisséo",
-        "description": "Recherchez un arrêt par nom (ex. Capitole, Jeanne d'Arc) ou saisissez un identifiant GTFS (stop_area:SA_1715 / stop_point:SP_1912). La première configuration télécharge et indexe le GTFS Tisséo (≈14 Mo, jusqu'à une minute).",
-        "data": {"query": "Nom ou identifiant de l'arrêt"}
+        "description": "Cherchez un arrêt par son nom (ex. Capitole, Jeanne d'Arc) ou saisissez un identifiant GTFS (stop_area:SA_1715 / stop_point:SP_1912). La première configuration télécharge et indexe le GTFS Tisséo (≈14 Mo, jusqu'à une minute).",
+        "data": {
+          "query": "Nom ou identifiant de l'arrêt"
+        }
       },
       "stop": {
-        "title": "Choisir l'arrêt",
-        "description": "Une zone d'arrêt regroupe tous les quais/directions ; un quai correspond à un point d'arrêt (en général une direction).",
-        "data": {"stop_id": "Arrêt"}
+        "title": "Choisissez l'arrêt",
+        "description": "Une zone d'arrêt couvre tous les quais/directions ; un quai est un point d'arrêt unique (généralement une direction).",
+        "data": {
+          "stop_id": "Arrêt"
+        }
       },
       "settings": {
         "title": "Départs à {stop}",
-        "description": "Laissez la liste vide pour inclure toutes les lignes desservant l'arrêt.",
+        "description": "Laissez la liste des lignes vide pour inclure toutes les lignes de l'arrêt. La clé d'API Tisséo est facultative : demandez-la à opendata@tisseo.fr ; sans clé, l'intégration utilise les données ouvertes sans clé.",
         "data": {
-          "lines": "Lignes (filtre optionnel)",
+          "lines": "Lignes (filtre facultatif)",
           "count": "Nombre de capteurs de départ",
           "scan_interval": "Intervalle de mise à jour",
           "network_alerts": "Inclure les alertes réseau",
-          "realtime": "Utiliser le temps réel GTFS-RT quand il est publié (bus, tram)"
+          "realtime": "Utiliser les prévisions en temps réel publiées (bus, tram)",
+          "walking_time": "Temps de marche jusqu'à l'arrêt",
+          "buffer": "Marge de sécurité",
+          "delay_threshold": "Événements tisseo_delay au-delà de (0 = désactivé)",
+          "api_key": "Clé d'API Tisséo (facultative)"
+        }
+      },
+      "journey": {
+        "title": "Trajet",
+        "description": "Cherchez les arrêts de départ et d'arrivée.",
+        "data": {
+          "origin_query": "Départ (nom d'arrêt)",
+          "destination_query": "Arrivée (nom d'arrêt)"
+        }
+      },
+      "journey_pick": {
+        "title": "Trajet",
+        "description": "Les trajets directs et avec une correspondance sont calculés à partir des horaires (et ajustés avec le temps réel quand il est disponible).",
+        "data": {
+          "origin": "Départ",
+          "destination": "Arrivée",
+          "count": "Nombre de trajets",
+          "min_transfer": "Temps de correspondance minimum"
+        }
+      },
+      "bike": {
+        "title": "Station VélôToulouse",
+        "description": "Stations les plus proches de votre domicile.",
+        "data": {
+          "station_id": "Station"
+        }
+      },
+      "park_ride": {
+        "title": "Parking relais",
+        "description": "Seule la capacité est publiée en données ouvertes ; l'occupation en direct n'est pas disponible sans le site Tisséo.",
+        "data": {
+          "park_id": "Parking relais"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Clé d'API Tisséo refusée",
+        "description": "L'API Tisséo a refusé la clé configurée pour {title}. Saisissez une nouvelle clé ou laissez le champ vide pour n'utiliser que les données ouvertes sans clé.",
+        "data": {
+          "api_key": "Clé d'API Tisséo"
         }
       }
     },
     "error": {
       "cannot_connect": "Impossible de télécharger le GTFS Tisséo.",
-      "no_stop": "Aucun arrêt ne correspond."
+      "no_stop": "Aucun arrêt ne correspond à ce nom ou identifiant.",
+      "invalid_key": "L'API Tisséo a refusé cette clé.",
+      "api_unreachable": "Impossible de joindre l'API Tisséo pour vérifier la clé ; réessayez ou laissez le champ vide.",
+      "same_stop": "Le départ et l'arrivée sont le même arrêt."
     },
-    "abort": {"already_configured": "Cet arrêt / ces lignes sont déjà configurés."}
+    "abort": {
+      "already_configured": "Déjà configuré.",
+      "cannot_connect": "Impossible de télécharger le GTFS Tisséo.",
+      "no_nearby": "Aucun arrêt Tisséo à moins de 5 km du domicile.",
+      "cannot_connect_gbfs": "Impossible de joindre le flux GBFS VélôToulouse.",
+      "cannot_connect_parkride": "Impossible de joindre le portail open data de Toulouse Métropole.",
+      "reauth_successful": "La clé d'API a été mise à jour."
+    }
   },
   "options": {
     "step": {
       "init": {
         "title": "Options Tisséo",
+        "description": "Clé d'API configurée : {api}. Laissez le champ de clé vide pour conserver la clé actuelle.",
         "data": {
-          "lines": "Lignes (filtre optionnel)",
+          "lines": "Lignes (filtre facultatif)",
           "count": "Nombre de capteurs de départ",
           "scan_interval": "Intervalle de mise à jour",
           "network_alerts": "Inclure les alertes réseau",
-          "realtime": "Utiliser le temps réel GTFS-RT quand il est publié (bus, tram)"
+          "realtime": "Utiliser les prévisions en temps réel publiées (bus, tram)",
+          "walking_time": "Temps de marche jusqu'à l'arrêt",
+          "buffer": "Marge de sécurité",
+          "delay_threshold": "Événements tisseo_delay au-delà de (0 = désactivé)",
+          "api_key": "Nouvelle clé d'API Tisséo (facultative)",
+          "clear_api_key": "Supprimer la clé d'API"
+        }
+      },
+      "journey": {
+        "title": "Options du trajet",
+        "data": {
+          "count": "Nombre de trajets",
+          "min_transfer": "Temps de correspondance minimum",
+          "scan_interval": "Intervalle de mise à jour",
+          "realtime": "Utiliser le temps réel"
+        }
+      },
+      "simple": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Intervalle de mise à jour"
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "L'API Tisséo a refusé cette clé.",
+      "api_unreachable": "Impossible de joindre l'API Tisséo pour vérifier la clé ; réessayez ou laissez le champ vide."
+    }
+  },
+  "issues": {
+    "invalid_api_key": {
+      "title": "Clé d'API Tisséo refusée ({title})",
+      "description": "L'API officielle Tisséo a refusé la clé configurée : {title} utilise désormais les données ouvertes sans clé. Ouvrez Paramètres → Appareils et services → Tisséo et suivez la demande de réauthentification pour saisir une nouvelle clé ou la supprimer."
+    }
+  },
+  "services": {
+    "get_trip": {
+      "name": "Arrêts d'une course",
+      "description": "Renvoie les passages (arrêts et horaires) d'une course depuis l'index des horaires, ajustés avec le temps réel quand il est disponible.",
+      "fields": {
+        "trip_id": {
+          "name": "Identifiant de course",
+          "description": "Identifiant GTFS de la course (attribut trip_id d'un départ)."
+        },
+        "stop_id": {
+          "name": "Identifiant d'arrêt",
+          "description": "Arrêt facultatif où la course a été vue (fixe le jour de service)."
+        },
+        "scheduled": {
+          "name": "Heure prévue",
+          "description": "Départ prévu facultatif (ISO 8601) à cet arrêt."
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "departure": {"name": "Départ {index}"},
-      "alerts": {"name": "Perturbations"}
+      "departure": {
+        "name": "Départ {index}"
+      },
+      "alerts": {
+        "name": "Perturbations"
+      },
+      "leave_in": {
+        "name": "Partir dans"
+      },
+      "journey": {
+        "name": "Prochain trajet"
+      },
+      "bike_bikes": {
+        "name": "Vélos disponibles"
+      },
+      "bike_docks": {
+        "name": "Places libres"
+      },
+      "parkride_capacity": {
+        "name": "Capacité"
+      },
+      "feed_health": {
+        "name": "État du flux",
+        "state": {
+          "ok": "OK",
+          "degraded": "Dégradé",
+          "down": "Hors service"
+        }
+      },
+      "feed_last_success": {
+        "name": "Dernière mise à jour réussie"
+      },
+      "feed_success_rate": {
+        "name": "Taux de succès du flux"
+      },
+      "feed_feed_age": {
+        "name": "Âge du flux temps réel"
+      }
+    },
+    "binary_sensor": {
+      "leave_now": {
+        "name": "Partir maintenant"
+      },
+      "timetable_change": {
+        "name": "Changement d'horaires demain"
+      }
     }
   }
 }

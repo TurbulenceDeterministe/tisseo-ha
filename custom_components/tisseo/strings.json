@@ -2,51 +2,214 @@
   "config": {
     "step": {
       "user": {
+        "title": "Tisséo",
+        "description": "What do you want to add?",
+        "menu_options": {
+          "stop_search": "A stop (search by name or ID)",
+          "nearby": "A stop near my home (top 10 by distance)",
+          "journey": "A journey (origin → destination)",
+          "bike": "A VélôToulouse bike station",
+          "park_ride": "A park-and-ride (P+R)"
+        }
+      },
+      "stop_search": {
         "title": "Tisséo stop",
         "description": "Search a stop by name (e.g. Capitole, Jeanne d'Arc) or enter a GTFS stop id (stop_area:SA_1715 / stop_point:SP_1912). The first setup downloads and indexes the Tisséo GTFS (≈14 MB, up to a minute).",
-        "data": {"query": "Stop name or ID"}
+        "data": {
+          "query": "Stop name or ID"
+        }
       },
       "stop": {
         "title": "Choose the stop",
         "description": "A stop area covers every platform/direction; a platform is a single stop point (usually one direction).",
-        "data": {"stop_id": "Stop"}
+        "data": {
+          "stop_id": "Stop"
+        }
       },
       "settings": {
         "title": "Departures at {stop}",
-        "description": "Leave the line list empty to include every line serving the stop.",
+        "description": "Leave the line list empty to include every line serving the stop. The Tisséo API key is optional: request one from opendata@tisseo.fr; without it the integration uses the keyless open data.",
         "data": {
           "lines": "Lines (optional filter)",
           "count": "Number of departure sensors",
           "scan_interval": "Update interval",
           "network_alerts": "Include network-wide alerts",
-          "realtime": "Use live GTFS-RT predictions when published (buses, tram)"
+          "realtime": "Use live predictions when published (buses, tram)",
+          "walking_time": "Walking time to the stop",
+          "buffer": "Safety buffer",
+          "delay_threshold": "Fire tisseo_delay events above (0 = off)",
+          "api_key": "Tisséo API key (optional)"
+        }
+      },
+      "journey": {
+        "title": "Journey",
+        "description": "Search the origin and destination stops.",
+        "data": {
+          "origin_query": "From (stop name)",
+          "destination_query": "To (stop name)"
+        }
+      },
+      "journey_pick": {
+        "title": "Journey",
+        "description": "Direct trips and connections with one transfer are searched in the timetable (and adjusted with live data when available).",
+        "data": {
+          "origin": "From",
+          "destination": "To",
+          "count": "Connections to list",
+          "min_transfer": "Minimum transfer time"
+        }
+      },
+      "bike": {
+        "title": "VélôToulouse station",
+        "description": "Stations closest to your home location.",
+        "data": {
+          "station_id": "Station"
+        }
+      },
+      "park_ride": {
+        "title": "Park-and-ride",
+        "description": "Only the capacity is published as open data; live occupancy is not available without the Tisséo website.",
+        "data": {
+          "park_id": "Park-and-ride"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Tisséo API key rejected",
+        "description": "The Tisséo API rejected the key configured for {title}. Enter a new key, or leave the field empty to use the keyless open data only.",
+        "data": {
+          "api_key": "Tisséo API key"
         }
       }
     },
     "error": {
       "cannot_connect": "Could not download the Tisséo GTFS feed.",
-      "no_stop": "No stop matches this name or ID."
+      "no_stop": "No stop matches this name or ID.",
+      "invalid_key": "The Tisséo API rejected this key.",
+      "api_unreachable": "The Tisséo API could not be reached to check the key; try again or leave it empty.",
+      "same_stop": "Origin and destination are the same stop."
     },
-    "abort": {"already_configured": "This stop / line selection is already configured."}
+    "abort": {
+      "already_configured": "This is already configured.",
+      "cannot_connect": "Could not download the Tisséo GTFS feed.",
+      "no_nearby": "No Tisséo stop within 5 km of the home location.",
+      "cannot_connect_gbfs": "Could not reach the VélôToulouse GBFS feed.",
+      "cannot_connect_parkride": "Could not reach the Toulouse Métropole open data portal.",
+      "reauth_successful": "The API key was updated."
+    }
   },
   "options": {
     "step": {
       "init": {
         "title": "Tisséo options",
+        "description": "API key configured: {api}. Leave the key field empty to keep the current key.",
         "data": {
           "lines": "Lines (optional filter)",
           "count": "Number of departure sensors",
           "scan_interval": "Update interval",
           "network_alerts": "Include network-wide alerts",
-          "realtime": "Use live GTFS-RT predictions when published (buses, tram)"
+          "realtime": "Use live predictions when published (buses, tram)",
+          "walking_time": "Walking time to the stop",
+          "buffer": "Safety buffer",
+          "delay_threshold": "Fire tisseo_delay events above (0 = off)",
+          "api_key": "New Tisséo API key (optional)",
+          "clear_api_key": "Remove the API key"
+        }
+      },
+      "journey": {
+        "title": "Journey options",
+        "data": {
+          "count": "Connections to list",
+          "min_transfer": "Minimum transfer time",
+          "scan_interval": "Update interval",
+          "realtime": "Use live predictions"
+        }
+      },
+      "simple": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Update interval"
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "The Tisséo API rejected this key.",
+      "api_unreachable": "The Tisséo API could not be reached to check the key; try again or leave it empty."
+    }
+  },
+  "issues": {
+    "invalid_api_key": {
+      "title": "Tisséo API key rejected ({title})",
+      "description": "The official Tisséo API rejected the configured key, so {title} fell back to the keyless open data. Open Settings → Devices & services → Tisséo and follow the re-authentication prompt to enter a new key or remove it."
+    }
+  },
+  "services": {
+    "get_trip": {
+      "name": "Get trip stops",
+      "description": "Returns the calls (stops and times) of one trip from the timetable index, adjusted with live data when available.",
+      "fields": {
+        "trip_id": {
+          "name": "Trip ID",
+          "description": "GTFS trip id (attribute trip_id of a departure)."
+        },
+        "stop_id": {
+          "name": "Stop ID",
+          "description": "Optional stop where the trip was seen (pins the service day)."
+        },
+        "scheduled": {
+          "name": "Scheduled time",
+          "description": "Optional scheduled departure (ISO 8601) at that stop."
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "departure": {"name": "Departure {index}"},
-      "alerts": {"name": "Disruptions"}
+      "departure": {
+        "name": "Departure {index}"
+      },
+      "alerts": {
+        "name": "Disruptions"
+      },
+      "leave_in": {
+        "name": "Leave in"
+      },
+      "journey": {
+        "name": "Next connection"
+      },
+      "bike_bikes": {
+        "name": "Bikes available"
+      },
+      "bike_docks": {
+        "name": "Docks available"
+      },
+      "parkride_capacity": {
+        "name": "Capacity"
+      },
+      "feed_health": {
+        "name": "Feed health",
+        "state": {
+          "ok": "OK",
+          "degraded": "Degraded",
+          "down": "Down"
+        }
+      },
+      "feed_last_success": {
+        "name": "Last successful update"
+      },
+      "feed_success_rate": {
+        "name": "Feed success rate"
+      },
+      "feed_feed_age": {
+        "name": "Real-time feed age"
+      }
+    },
+    "binary_sensor": {
+      "leave_now": {
+        "name": "Leave now"
+      },
+      "timetable_change": {
+        "name": "Timetable change tomorrow"
+      }
     }
   }
 }

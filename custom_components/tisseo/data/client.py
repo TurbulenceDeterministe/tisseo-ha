@@ -99,6 +99,7 @@ class TisseoFeeds:
             checked = meta.get("checked")
             if valid and not force and checked and \
                     datetime.now(TZ) - datetime.fromisoformat(checked) < max_age:
+                self.health["gtfs"].seed(datetime.fromisoformat(checked).timestamp())
                 return False
             headers = dict(HEADERS)
             if valid and meta.get("etag"):

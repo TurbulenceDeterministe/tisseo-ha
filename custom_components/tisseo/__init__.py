@@ -1,4 +1,4 @@
-"""Tisséo (Toulouse) next departures & disruptions, from keyless open data."""
+"""Tisséo (Toulouse) departures, journeys, disruptions, bikes and park-and-ride."""
 from __future__ import annotations
 
 import json
@@ -8,13 +8,15 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, GTFS_MAX_AGE, PLATFORMS
-from .coordinator import TisseoCoordinator
+from .const import (CONF_DESTINATION, CONF_ENTRY_TYPE, CONF_ORIGIN, CONF_STOP_ID, DOMAIN,
+                    GTFS_MAX_AGE, PLATFORMS, TYPE_BIKE, TYPE_JOURNEY, TYPE_PARKRIDE, TYPE_STOP)
+from .data.bikes import GbfsClient
 from .data.client import TisseoFeeds
+from .data.health import FeedHealth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +31,9 @@ def _card_version() -> str:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Serve the bundled Lovelace card and load it in the frontend automatically."""
+    """Websocket command + service, and the bundled Lovelace card."""
+    from .services import async_setup_services
+    async_setup_services(hass)
     if getattr(hass, "http", None) is None:  # e.g. unit tests without the http component
         _LOGGER.debug("http not loaded; Tisséo card not registered")
         return True
@@ -46,6 +50,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def entry_type(entry: ConfigEntry) -> str:
+    return entry.data.get(CONF_ENTRY_TYPE, TYPE_STOP)
+
+
 def get_feeds(hass: HomeAssistant) -> TisseoFeeds:
     """One shared feed manager (GTFS index + GTFS-RT snapshot) for all entries."""
     data = hass.data.setdefault(DOMAIN, {})
@@ -58,13 +66,53 @@ def get_feeds(hass: HomeAssistant) -> TisseoFeeds:
     return data["feeds"]
 
 
+def get_gbfs(hass: HomeAssistant) -> tuple[GbfsClient, FeedHealth]:
+    data = hass.data.setdefault(DOMAIN, {})
+    if "gbfs" not in data:
+        data["gbfs"] = (GbfsClient(async_get_clientsession(hass)), FeedHealth("gbfs", stale_after=900))
+    return data["gbfs"]
+
+
+def get_parkride_health(hass: HomeAssistant) -> FeedHealth:
+    data = hass.data.setdefault(DOMAIN, {})
+    return data.setdefault("parkride_health", FeedHealth("parkride", stale_after=3 * 86400))
+
+
+def required_stops(hass: HomeAssistant, exclude: str | None = None) -> set[str]:
+    """Stops whose trips the lean GTFS index must contain (union over all entries)."""
+    out: set[str] = set()
+    for e in hass.config_entries.async_entries(DOMAIN):
+        if e.entry_id == exclude:
+            continue
+        t = entry_type(e)
+        if t == TYPE_STOP and e.data.get(CONF_STOP_ID):
+            out.add(e.data[CONF_STOP_ID])
+        elif t == TYPE_JOURNEY:
+            out.update(x for x in (e.data.get(CONF_ORIGIN), e.data.get(CONF_DESTINATION)) if x)
+    return out
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    feeds = get_feeds(hass)
-    try:
-        await feeds.ensure_gtfs(GTFS_MAX_AGE)
-    except Exception as err:  # noqa: BLE001
-        raise ConfigEntryNotReady(f"Tisséo GTFS unavailable: {err}") from err
-    coordinator = TisseoCoordinator(hass, entry, feeds)
+    from .coordinator import (BikeCoordinator, JourneyCoordinator, ParkRideCoordinator,
+                              TisseoCoordinator)
+    t = entry_type(entry)
+    if t in (TYPE_STOP, TYPE_JOURNEY):
+        feeds = get_feeds(hass)
+        feeds.required_stops = required_stops(hass)
+        try:
+            await feeds.ensure_gtfs(GTFS_MAX_AGE)
+            await feeds.ensure_index(feeds.required_stops)
+        except Exception as err:  # noqa: BLE001
+            raise ConfigEntryNotReady(f"Tisséo GTFS unavailable: {err}") from err
+        coordinator = (TisseoCoordinator if t == TYPE_STOP else JourneyCoordinator)(hass, entry, feeds)
+    elif t == TYPE_BIKE:
+        client, health = get_gbfs(hass)
+        coordinator = BikeCoordinator(hass, entry, client, health)
+    elif t == TYPE_PARKRIDE:
+        coordinator = ParkRideCoordinator(hass, entry, get_parkride_health(hass))
+    else:
+        _LOGGER.error("Unknown Tisséo entry type %s", t)
+        return False
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(_reload))
@@ -81,3 +129,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Shrink the lean index when a stop / journey is removed."""
+    from homeassistant.helpers import issue_registry as ir
+    from .coordinator import issue_id_invalid_key
+    ir.async_delete_issue(hass, DOMAIN, issue_id_invalid_key(entry.entry_id))
+    if entry_type(entry) not in (TYPE_STOP, TYPE_JOURNEY):
+        return
+    feeds = hass.data.get(DOMAIN, {}).get("feeds")
+    if feeds is None:
+        return
+    try:
+        await feeds.ensure_index(required_stops(hass, exclude=entry.entry_id))
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Index shrink after removal failed: %s", err)

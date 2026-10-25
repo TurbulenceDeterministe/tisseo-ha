@@ -1,0 +1,15 @@
+get_trip:
+  fields:
+    trip_id:
+      required: true
+      example: "1587097:12345"
+      selector:
+        text:
+    stop_id:
+      example: "stop_area:SA_1715"
+      selector:
+        text:
+    scheduled:
+      example: "2026-10-24T10:00:00+02:00"
+      selector:
+        text:
