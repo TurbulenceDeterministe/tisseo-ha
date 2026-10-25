@@ -1,0 +1,22 @@
+{
+  "domain": "tisseo",
+  "name": "Tisséo (Toulouse public transport)",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/your-github-user/tisseo-ha",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/your-github-user/tisseo-ha/issues",
+  "loggers": [
+    "custom_components.tisseo"
+  ],
+  "requirements": [
+    "gtfs-realtime-bindings>=1.0.0"
+  ],
+  "version": "0.3.0",
+  "after_dependencies": [
+    "http",
+    "frontend"
+  ]
+}

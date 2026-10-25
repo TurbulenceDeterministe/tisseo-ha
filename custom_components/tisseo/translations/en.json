@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tisséo stop",
+        "description": "Search a stop by name (e.g. Capitole, Jeanne d'Arc) or enter a GTFS stop id (stop_area:SA_1715 / stop_point:SP_1912). The first setup downloads and indexes the Tisséo GTFS (≈14 MB, up to a minute).",
+        "data": {"query": "Stop name or ID"}
+      },
+      "stop": {
+        "title": "Choose the stop",
+        "description": "A stop area covers every platform/direction; a platform is a single stop point (usually one direction).",
+        "data": {"stop_id": "Stop"}
+      },
+      "settings": {
+        "title": "Departures at {stop}",
+        "description": "Leave the line list empty to include every line serving the stop.",
+        "data": {
+          "lines": "Lines (optional filter)",
+          "count": "Number of departure sensors",
+          "scan_interval": "Update interval",
+          "network_alerts": "Include network-wide alerts",
+          "realtime": "Use live GTFS-RT predictions when published (buses, tram)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not download the Tisséo GTFS feed.",
+      "no_stop": "No stop matches this name or ID."
+    },
+    "abort": {"already_configured": "This stop / line selection is already configured."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tisséo options",
+        "data": {
+          "lines": "Lines (optional filter)",
+          "count": "Number of departure sensors",
+          "scan_interval": "Update interval",
+          "network_alerts": "Include network-wide alerts",
+          "realtime": "Use live GTFS-RT predictions when published (buses, tram)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "departure": {"name": "Departure {index}"},
+      "alerts": {"name": "Disruptions"}
+    }
+  }
+}

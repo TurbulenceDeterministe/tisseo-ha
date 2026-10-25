@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Arrêt Tisséo",
+        "description": "Recherchez un arrêt par nom (ex. Capitole, Jeanne d'Arc) ou saisissez un identifiant GTFS (stop_area:SA_1715 / stop_point:SP_1912). La première configuration télécharge et indexe le GTFS Tisséo (≈14 Mo, jusqu'à une minute).",
+        "data": {"query": "Nom ou identifiant de l'arrêt"}
+      },
+      "stop": {
+        "title": "Choisir l'arrêt",
+        "description": "Une zone d'arrêt regroupe tous les quais/directions ; un quai correspond à un point d'arrêt (en général une direction).",
+        "data": {"stop_id": "Arrêt"}
+      },
+      "settings": {
+        "title": "Départs à {stop}",
+        "description": "Laissez la liste vide pour inclure toutes les lignes desservant l'arrêt.",
+        "data": {
+          "lines": "Lignes (filtre optionnel)",
+          "count": "Nombre de capteurs de départ",
+          "scan_interval": "Intervalle de mise à jour",
+          "network_alerts": "Inclure les alertes réseau",
+          "realtime": "Utiliser le temps réel GTFS-RT quand il est publié (bus, tram)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de télécharger le GTFS Tisséo.",
+      "no_stop": "Aucun arrêt ne correspond."
+    },
+    "abort": {"already_configured": "Cet arrêt / ces lignes sont déjà configurés."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options Tisséo",
+        "data": {
+          "lines": "Lignes (filtre optionnel)",
+          "count": "Nombre de capteurs de départ",
+          "scan_interval": "Intervalle de mise à jour",
+          "network_alerts": "Inclure les alertes réseau",
+          "realtime": "Utiliser le temps réel GTFS-RT quand il est publié (bus, tram)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "departure": {"name": "Départ {index}"},
+      "alerts": {"name": "Perturbations"}
+    }
+  }
+}

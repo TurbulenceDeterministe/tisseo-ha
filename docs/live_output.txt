@@ -1,0 +1,47 @@
+Sun Oct 25 12:03:28 +03 2026
+GTFS ready (rebuilt=False) in 0.0s; meta={'schema': '2', 'feed_version': '2026-10-25T09:58:14.209864+01:00', 'built': '2026-10-25T09:58:18.563253+01:00'}
+GTFS-RT: 661 trip updates, 67 alerts, feed time 2026-10-25 10:03:28 CET (1.0s)
+Matches: Capitole [stop_area:SA_1715] lines=['A']
+
+Next departures at Capitole (stop_area:SA_1715) — now 10:03:29 CET
+  metro  A      -> Basso Cambo                            sched 10:04:33  exp 10:04:33  (  1 min)  SCH delay   n/a  [stop_point:SP_1912]
+  metro  A      -> Balma-Gramont                          sched 10:05:46  exp 10:05:46  (  2 min)  SCH delay   n/a  [stop_point:SP_2757]
+  metro  A      -> Basso Cambo                            sched 10:11:33  exp 10:11:33  (  8 min)  SCH delay   n/a  [stop_point:SP_1912]
+  metro  A      -> Balma-Gramont                          sched 10:12:46  exp 10:12:46  (  9 min)  SCH delay   n/a  [stop_point:SP_2757]
+  metro  A      -> Basso Cambo                            sched 10:18:33  exp 10:18:33  ( 15 min)  SCH delay   n/a  [stop_point:SP_1912]
+  metro  A      -> Balma-Gramont                          sched 10:19:46  exp 10:19:46  ( 16 min)  SCH delay   n/a  [stop_point:SP_2757]
+
+Alerts relevant to this stop/lines: 4
+  - 🟠 LIGNE B : arrêt partiel en soirée les 26 et 27/10/2026 (network)
+  - ⏰ Métro, Tram et Bus : horaires vacances scolaires (network)
+  - Agences Tisséo : horaires vacances de Toussaint (network)
+  - Perturbation parc relais Ribaute du 30/03 à fin novembre 2026 (network)
+GTFS ready (rebuilt=False) in 0.0s; meta={'schema': '2', 'feed_version': '2026-10-25T09:58:14.209864+01:00', 'built': '2026-10-25T09:58:18.563253+01:00'}
+GTFS-RT: 661 trip updates, 67 alerts, feed time 2026-10-25 10:03:28 CET (0.8s)
+Matches: Jeanne d'Arc [stop_area:SA_1546] lines=['B', '15', '23', '29', '39', '45', '70', 'L1', 'L9', 'L14', 'AERO', 'CIMTR']
+
+Next departures at Jeanne d'Arc (stop_area:SA_1546) — now 10:03:30 CET
+  metro  B      -> Borderouge                             sched 10:03:45  exp 10:03:45  (  0 min)  SCH delay   n/a  [stop_point:SP_962]
+  metro  B      -> Ramonville                             sched 10:04:17  exp 10:04:17  (  0 min)  SCH delay   n/a  [stop_point:SP_2676]
+  bus    L1     -> Sept Deniers - Salvador Dali           sched 10:02:00  exp 10:04:47  (  1 min)  RT  delay +167s  [stop_point:SP_2373]
+  metro  B      -> Ramonville                             sched 10:08:17  exp 10:08:17  (  4 min)  SCH delay   n/a  [stop_point:SP_2676]
+  metro  B      -> Borderouge                             sched 10:09:15  exp 10:09:15  (  5 min)  SCH delay   n/a  [stop_point:SP_962]
+  metro  B      -> Ramonville                             sched 10:12:17  exp 10:12:17  (  8 min)  SCH delay   n/a  [stop_point:SP_2676]
+
+Alerts relevant to this stop/lines: 6
+  - 🟠 LIGNE B : arrêt partiel en soirée les 26 et 27/10/2026 (network)
+  - ⏰ Métro, Tram et Bus : horaires vacances scolaires (network)
+  - Agences Tisséo : horaires vacances de Toussaint (network)
+  - Perturbation parc relais Ribaute du 30/03 à fin novembre 2026 (network)
+  - B : Arrêt partiel Métro (line:69)
+rt_error: None
+sensor.tisseo_capitole_departure_1 = 2026-10-25T09:04:33+00:00  line=A dest=Basso Cambo min=0 realtime=False delay=None feed_ok=True feed_time=2026-10-25T10:04:58+01:00
+sensor.tisseo_capitole_departure_2 = 2026-10-25T09:05:46+00:00  line=A dest=Balma-Gramont min=0 realtime=False delay=None feed_ok=True feed_time=None
+sensor.tisseo_capitole_departure_3 = 2026-10-25T09:11:33+00:00  line=A dest=Basso Cambo min=6 realtime=False delay=None feed_ok=True feed_time=None
+sensor.tisseo_capitole_disruptions = 4  ['🟠 LIGNE B : arrêt partiel en soirée les 26 et 27/10/2026', '⏰ Métro, Tram et Bus : horaires vacances scolaires', 'Agences Tisséo : horaires vacances de Toussaint']
+rt_error: None
+sensor.tisseo_ile_du_ramier_departure_1 = 2026-10-25T09:12:24+00:00  line=T1 dest=Palais de Justice min=7 realtime=True delay=144 feed_ok=True feed_time=2026-10-25T10:04:58+01:00
+sensor.tisseo_ile_du_ramier_departure_2 = 2026-10-25T09:12:53+00:00  line=T1 dest=MEETT min=7 realtime=True delay=-7 feed_ok=True feed_time=None
+sensor.tisseo_ile_du_ramier_departure_3 = 2026-10-25T09:21:30+00:00  line=T1 dest=Palais de Justice min=16 realtime=True delay=90 feed_ok=True feed_time=None
+sensor.tisseo_ile_du_ramier_disruptions = 5  ['🟠 LIGNE B : arrêt partiel en soirée les 26 et 27/10/2026', '⏰ Métro, Tram et Bus : horaires vacances scolaires', 'Agences Tisséo : horaires vacances de Toussaint']
+2 passed in 2.07s
