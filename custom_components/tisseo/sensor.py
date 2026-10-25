@@ -112,6 +112,7 @@ class TisseoDepartureSensor(_Base):
             attrs["realtime_feed_time"] = data.feed_timestamp.isoformat() if data.feed_timestamp else None
             attrs["realtime_feed_url"] = data.feed_url
             attrs["live_lines"] = data.live_lines
+            attrs["next_service"] = data.next_service
             attrs["official_api"] = "active" if data.api_used else (
                 "error" if self._entry.data.get(CONF_API_KEY) else "not_configured")
         return attrs
@@ -215,6 +216,7 @@ class TisseoJourneySensor(_Base):
             attrs.update({k: d[k] for k in ("departure", "arrival", "duration_min", "transfers",
                                             "lines", "realtime", "transfer_at_risk", "legs")})
         attrs["connections"] = [x.as_dict() for x in (data.connections if data else [])]
+        attrs["later"] = bool(data and data.later)
         return attrs
 
 

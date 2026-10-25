@@ -1,12 +1,17 @@
 """Journeys between two stops: direct trips and one-transfer connections.
 
 Bounded search on the lean index (trips calling at the configured origin and
-destination are indexed in full):
+destination are indexed in full, plus the trunk lines when a journey is configured):
   * direct: a trip boards at the origin and later sets down at the destination;
   * one transfer: a trip from the origin sets down at stop area X, another trip
     (different line) boards at X at least ``min_transfer`` later and reaches the
-    destination. For every first-leg departure only the earliest arrival is kept,
-    then dominated connections (leave earlier *and* arrive later) are dropped.
+    destination;
+  * two transfers: origin -> X by a first trip, X -> Y by any indexed trip of
+    another line (in practice metro / tram / Linéo), then Y -> destination. Only
+    used when it arrives at least ``min_transfer`` earlier than the best option
+    with fewer changes from the same first departure.
+For every first-leg departure only the earliest arrival is kept, then dominated
+connections (leave earlier *and* arrive later) are dropped.
 """
 from __future__ import annotations
 
@@ -117,6 +122,34 @@ WHERE e.stop_idx IN ({dest}) AND e.alight = 1 AND e.dep - e.dwell BETWEEN ? AND 
 """
 
 
+_MID_LEG_SQL = """
+SELECT t.trip_id, t.headsign, r.route_id, c.seq AS cseq, sc.stop_id AS c_stop, sc.name AS c_name,
+       COALESCE(sc.parent, sc.stop_id) AS c_area, c.dep AS c_dep, e.seq AS eseq,
+       se.stop_id AS e_stop, se.name AS e_name, COALESCE(se.parent, se.stop_id) AS e_area,
+       e.dep - e.dwell AS e_arr
+FROM stop_times c
+JOIN trips t ON t.idx = c.trip_idx
+JOIN service_dates sd ON sd.service_idx = t.service_idx AND sd.d = ?
+JOIN stop_times e ON e.trip_idx = c.trip_idx AND e.seq > c.seq AND e.alight = 1
+JOIN stops sc ON sc.idx = c.stop_idx
+JOIN stops se ON se.idx = e.stop_idx
+JOIN routes r ON r.idx = t.route_idx
+WHERE c.stop_idx IN ({a1}) AND c.board = 1 AND c.dep BETWEEN ? AND ? AND e.stop_idx IN ({a2})
+"""
+
+
+def _suffix_best(items: list[tuple], arr_key) -> tuple[list, list]:
+    """Sort by departure; for each position, the item with the earliest arrival from there on."""
+    items.sort(key=lambda x: x[0])
+    suffix: list = [None] * len(items)
+    best = None
+    for i in range(len(items) - 1, -1, -1):
+        if best is None or arr_key(items[i]) < arr_key(best):
+            best = items[i]
+        suffix[i] = best
+    return [x[0] for x in items], suffix
+
+
 def _stop_idx(con, store: GtfsStore, stop_id: str) -> tuple[list[int], str]:
     ids = store.child_stop_ids(stop_id) + [stop_id]
     ph = ",".join("?" * len(ids))
@@ -129,7 +162,7 @@ def find_connections(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
                      destination: str, now: datetime | None = None, count: int = 3,
                      window: timedelta = timedelta(hours=3),
                      min_transfer: timedelta = timedelta(minutes=3),
-                     max_transfers: int = 1, max_first_legs: int = 80) -> list[Connection]:
+                     max_transfers: int = 2, max_first_legs: int = 80) -> list[Connection]:
     now = (now or datetime.now(TZ)).astimezone(TZ)
     rt = rt or RealtimeSnapshot.empty()
     routes = store.routes()
@@ -196,14 +229,46 @@ def find_connections(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
         # Earliest arrival from each boarding area: sort by departure, suffix-min arrival.
         index: dict[str, tuple[list, list]] = {}
         for area, items in last_legs.items():
-            items.sort(key=lambda x: x[0])
-            suffix: list[int] = [0] * len(items)
-            best = None
-            for i in range(len(items) - 1, -1, -1):
-                if best is None or items[i][1] < items[best][1]:
-                    best = i
-                suffix[i] = best
-            index[area] = ([x[0] for x in items], [(items[j], ) for j in suffix])
+            deps_, best_ = _suffix_best(items, lambda x: x[1])
+            index[area] = (deps_, [(b, ) for b in best_])
+
+        # Two transfers: middle legs from any first-leg set-down area to any area
+        # with a last leg. mid_index[area] -> (deps, best (c_dep, final_arr, row, last)).
+        mid_index: dict[str, tuple[list, list]] = {}
+        if max_transfers >= 2 and index and first_legs:
+            skip = {orig_area, dest_area}
+            a1_areas = {r["b_area"] for _, info in first_legs for r in info["alights"]} - skip
+            a2_areas = set(index) - skip
+            by_area: dict[str, list[int]] = {}
+            for idx_, ar in con.execute("SELECT idx, COALESCE(parent, stop_id) FROM stops"):
+                if ar in a1_areas or ar in a2_areas:
+                    by_area.setdefault(ar, []).append(idx_)
+            a1 = ",".join(str(i) for a in a1_areas for i in by_area.get(a, []))
+            a2 = ",".join(str(i) for a in a2_areas for i in by_area.get(a, []))
+            mids: dict[str, list[tuple]] = {}
+            if a1 and a2:
+                for day in (today - timedelta(days=1), today, today + timedelta(days=1)):
+                    o = service_day_origin(day)
+                    lo = int((now - look_back - o).total_seconds())
+                    hi = int((now + window + timedelta(hours=1) - o).total_seconds())
+                    if hi < 0 or lo > 48 * 3600:
+                        continue
+                    d = int(day.strftime("%Y%m%d"))
+                    for row in con.execute(_MID_LEG_SQL.format(a1=a1, a2=a2), (d, max(lo, 0), hi)):
+                        if row["e_area"] == row["c_area"]:
+                            continue
+                        e_arr = o + timedelta(seconds=row["e_arr"])
+                        deps_, best_ = index[row["e_area"]]
+                        i = bisect_left(deps_, e_arr + min_transfer)
+                        if i >= len(deps_):
+                            continue
+                        last = best_[i][0]
+                        if last[2]["route_id"] == row["route_id"]:
+                            continue
+                        mids.setdefault(row["c_area"], []).append(
+                            (o + timedelta(seconds=row["c_dep"]), last[1], row, e_arr, last))
+            for area, items in mids.items():
+                mid_index[area] = _suffix_best(items, lambda x: x[1])
 
         dest_stop_ids = set(store.child_stop_ids(destination)) | {destination}
         for o, info in first_legs:
@@ -217,12 +282,36 @@ def find_connections(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
                                  row["a_name"], row["aseq"], sched_dep, row["b_stop"],
                                  row["b_name"], row["bseq"], sched_arr)
                     conn = Connection([leg])
-                    if best is None or conn.arrival < best.arrival or \
+                    extra = min_transfer if best is not None and best.transfers >= 2 else timedelta(0)
+                    if best is None or conn.arrival < best.arrival + extra or \
                             (conn.arrival == best.arrival and conn.transfers < best.transfers):
                         best = conn
                     break  # later calls of the same trip cannot be better
                 area = row["b_area"]
-                if max_transfers < 1 or area in (orig_area, dest_area) or area not in index:
+                if max_transfers < 1 or area in (orig_area, dest_area):
+                    continue
+                if area in mid_index:
+                    m_deps, m_best = mid_index[area]
+                    j = bisect_left(m_deps, sched_arr + min_transfer)
+                    if j < len(m_deps):
+                        m_dep, f_arr, mrow, m_arr, last = m_best[j]
+                        if mrow["route_id"] != row["route_id"] and mrow["trip_id"] != row["trip_id"] \
+                                and (best is None or f_arr + min_transfer <= best.arrival):
+                            c_dep3, e_arr3, r3 = last
+                            legs = [
+                                mk_leg(row["trip_id"], row["headsign"], row["route_id"], row["a_stop"],
+                                       row["a_name"], row["aseq"], sched_dep, row["b_stop"],
+                                       row["b_name"], row["bseq"], sched_arr),
+                                mk_leg(mrow["trip_id"], mrow["headsign"], mrow["route_id"],
+                                       mrow["c_stop"], mrow["c_name"], mrow["cseq"], m_dep,
+                                       mrow["e_stop"], mrow["e_name"], mrow["eseq"], m_arr),
+                                mk_leg(r3["trip_id"], r3["headsign"], r3["route_id"], r3["c_stop"],
+                                       r3["c_name"], r3["cseq"], c_dep3, r3["e_stop"], r3["e_name"],
+                                       r3["eseq"], e_arr3)]
+                            risk = any(a.arrival + min_transfer > b.departure
+                                       for a, b in zip(legs, legs[1:]))
+                            best = Connection(legs, transfer_at_risk=risk)
+                if area not in index:
                     continue
                 deps, best_after = index[area]
                 i = bisect_left(deps, sched_arr + min_transfer)
@@ -231,7 +320,8 @@ def find_connections(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
                 c_dep, e_arr, r2 = best_after[i][0]
                 if r2["trip_id"] == row["trip_id"] or r2["route_id"] == row["route_id"]:
                     continue
-                if best is not None and e_arr >= best.arrival:
+                if best is not None and (e_arr >= best.arrival if best.transfers <= 1
+                                         else e_arr >= best.arrival + min_transfer):
                     continue
                 leg1 = mk_leg(row["trip_id"], row["headsign"], row["route_id"], row["a_stop"],
                               row["a_name"], row["aseq"], sched_dep, row["b_stop"],
@@ -262,3 +352,31 @@ def find_connections(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
             continue
         out.append(c)
     return out[:count]
+
+
+def search_with_fallback(store: GtfsStore, rt: RealtimeSnapshot | None, origin: str,
+                         destination: str, now: datetime | None = None, count: int = 3,
+                         min_transfer: timedelta = timedelta(minutes=3),
+                         tries: int = 3) -> tuple[list[Connection], bool]:
+    """Connections in the next 3 h; if none, the first ones of the next service.
+
+    Returns (connections, later): `later` is True when they start after the 3 h window
+    (late evening, or a day without service on the origin's lines)."""
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    conns = find_connections(store, rt, origin, destination, now=now, count=count,
+                             min_transfer=min_transfer)
+    if conns:
+        return conns, False
+    origin_ids = store.child_stop_ids(origin)
+    after = now + timedelta(hours=3)
+    for _ in range(tries):
+        nxt = store.next_scheduled(origin_ids, after)
+        if not nxt:
+            break
+        start = nxt["dep"] - timedelta(minutes=1)
+        conns = find_connections(store, rt, origin, destination, now=start, count=count,
+                                 min_transfer=min_transfer)
+        if conns:
+            return conns, True
+        after = start + timedelta(hours=3)
+    return [], False

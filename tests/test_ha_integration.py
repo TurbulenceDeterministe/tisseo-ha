@@ -31,14 +31,17 @@ class FakeFeeds:
         self.health = {"gtfs_rt": FeedHealth("gtfs_rt"), "gtfs": FeedHealth("gtfs")}
         self.required_stops = set()
         self.index_calls = []
+        self.trunk_calls = []
+        self.trunk = False
         self.index_stats = {"trips_kept": 1}
 
     async def ensure_gtfs(self, *a, **k):
         self.health["gtfs"].record(True)
         return False
 
-    async def ensure_index(self, stops=None):
+    async def ensure_index(self, stops=None, trunk=None):
         self.index_calls.append(set(stops or []))
+        self.trunk_calls.append(trunk)
         return False
 
     async def realtime(self):

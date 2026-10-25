@@ -23,6 +23,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             feeds.store.is_valid) else {}
         out["gtfs"] = {"index_meta": meta, "index_stats": feeds.index_stats,
                        "required_stops": sorted(feeds.required_stops or []),
+                       "trunk_lines_indexed": feeds.trunk,
                        "realtime_source": feeds.rt_source_url, "realtime_error": feeds.rt_error,
                        "feed_age_s": feeds.feed_age()}
     data = getattr(coord, "data", None)

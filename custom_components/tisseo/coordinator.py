@@ -24,7 +24,8 @@ from .data.client import TisseoFeeds
 from .data.const import TZ
 from .data.departures import Departure, alerts_for, live_routes, merge_api, next_departures
 from .data.health import FeedHealth
-from .data.journeys import Connection, find_connections
+from .data.const import ROUTE_TYPE_NAMES
+from .data.journeys import Connection, search_with_fallback
 from .data.parkride import ParkRide, fetch_parkride
 from .data.realtime import Alert
 from .data.timetable import timetable_change
@@ -54,6 +55,9 @@ class TisseoData:
     api_used: bool = False
     api_error: str | None = None
     timetable: dict | None = None
+    # First scheduled departure after the look-ahead window, when there is none in it
+    # (no evening / weekend / holiday service on the configured lines).
+    next_service: dict | None = None
 
 
 def leave_info(deps: list[Departure], walk_min: float, buffer_min: float,
@@ -194,7 +198,15 @@ class TisseoCoordinator(_BaseCoordinator):
                 self._timetable_key = key
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Timetable comparison failed: %s", err)
+        next_service = None
+        if not deps:
+            try:
+                next_service = await self.hass.async_add_executor_job(
+                    self._next_service, store, routes)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Next service lookup failed: %s", err)
         data = TisseoData(
+            next_service=next_service,
             feed_url=self.feeds.rt_source_url if rt is not None else None,
             live_lines=sorted(routes[r].short_name if r in routes else r for r in live),
             departures=deps[: self.count], all_departures=deps[:FETCH_DEPARTURES],
@@ -206,6 +218,20 @@ class TisseoCoordinator(_BaseCoordinator):
         )
         self._fire_events(data, routes)
         return data
+
+    def _next_service(self, store, routes) -> dict | None:
+        """Next scheduled departure (any day in the coming week) for the configured lines."""
+        nxt = store.next_scheduled(sorted(self._stop_ids), datetime.now(TZ),
+                                   self.route_ids or None)
+        if not nxt:
+            return None
+        r = routes.get(nxt["route_id"])
+        return {"scheduled": nxt["dep"].isoformat(), "line": r.short_name if r else nxt["route_id"],
+                "route_id": nxt["route_id"], "destination": nxt["headsign"],
+                "stop_id": nxt["stop_id"], "trip_id": nxt["trip_id"],
+                "mode": ROUTE_TYPE_NAMES.get(r.type, "bus") if r else "bus",
+                "color": f"#{r.color}" if r and r.color else "",
+                "text_color": f"#{r.text_color}" if r and r.text_color else ""}
 
     def _fire_events(self, data: TisseoData, routes) -> None:
         ids = {a.id for a in data.alerts}
@@ -253,6 +279,9 @@ class TisseoCoordinator(_BaseCoordinator):
 class JourneyData:
     connections: list[Connection] = field(default_factory=list)
     realtime_available: bool = False
+    # True when nothing leaves within the look-ahead window and the connections
+    # shown are the first ones of the next service (e.g. tomorrow morning).
+    later: bool = False
 
 
 class JourneyCoordinator(_BaseCoordinator):
@@ -276,13 +305,15 @@ class JourneyCoordinator(_BaseCoordinator):
             _LOGGER.warning("GTFS refresh failed: %s", err)
         rt = await self.feeds.realtime() if self.use_realtime else None
         try:
-            conns = await self.hass.async_add_executor_job(
-                lambda: find_connections(self.feeds.store, rt, self.origin, self.destination,
-                                         count=self.count,
-                                         min_transfer=timedelta(minutes=self.min_transfer)))
+            conns, later = await self.hass.async_add_executor_job(self._search, rt)
         except Exception as err:  # noqa: BLE001
             raise UpdateFailed(f"Could not compute journeys: {err}") from err
-        return JourneyData(conns, rt is not None)
+        return JourneyData(conns, rt is not None, later)
+
+    def _search(self, rt) -> tuple[list[Connection], bool]:
+        """Connections in the next 3 h; if none, the first ones of the next service."""
+        return search_with_fallback(self.feeds.store, rt, self.origin, self.destination,
+                                    count=self.count, min_transfer=timedelta(minutes=self.min_transfer))
 
 
 @dataclass

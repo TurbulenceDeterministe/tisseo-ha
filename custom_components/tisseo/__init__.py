@@ -92,6 +92,12 @@ def required_stops(hass: HomeAssistant, exclude: str | None = None) -> set[str]:
     return out
 
 
+def needs_trunk(hass: HomeAssistant, exclude: str | None = None) -> bool:
+    """Journeys need the trunk lines in the index (changes via metro / tram / Linéo)."""
+    return any(entry_type(e) == TYPE_JOURNEY for e in hass.config_entries.async_entries(DOMAIN)
+               if e.entry_id != exclude)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .coordinator import (BikeCoordinator, JourneyCoordinator, ParkRideCoordinator,
                               TisseoCoordinator)
@@ -99,9 +105,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if t in (TYPE_STOP, TYPE_JOURNEY):
         feeds = get_feeds(hass)
         feeds.required_stops = required_stops(hass)
+        feeds.trunk = needs_trunk(hass)
         try:
             await feeds.ensure_gtfs(GTFS_MAX_AGE)
-            await feeds.ensure_index(feeds.required_stops)
+            await feeds.ensure_index(feeds.required_stops, feeds.trunk)
         except Exception as err:  # noqa: BLE001
             raise ConfigEntryNotReady(f"Tisséo GTFS unavailable: {err}") from err
         coordinator = (TisseoCoordinator if t == TYPE_STOP else JourneyCoordinator)(hass, entry, feeds)
@@ -142,6 +149,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if feeds is None:
         return
     try:
-        await feeds.ensure_index(required_stops(hass, exclude=entry.entry_id))
+        await feeds.ensure_index(required_stops(hass, exclude=entry.entry_id),
+                                 needs_trunk(hass, exclude=entry.entry_id))
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Index shrink after removal failed: %s", err)

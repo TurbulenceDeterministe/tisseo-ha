@@ -45,17 +45,22 @@ class TisseoFeeds:
         self.sleep = asyncio.sleep
         # stop ids the lean index must cover (None = whole network)
         self.required_stops: set[str] | None = set()
+        # keep the trunk lines too (set when a journey is configured)
+        self.trunk: bool = False
         self.index_stats: dict | None = None
 
     # ---------------- lean index ----------------
-    async def ensure_index(self, stop_ids: set[str] | None = None) -> bool:
+    async def ensure_index(self, stop_ids: set[str] | None = None,
+                           trunk: bool | None = None) -> bool:
         """Rebuild the index from the cached zip when the configured stops changed."""
         if stop_ids is not None:
             self.required_stops = set(stop_ids)
+        if trunk is not None:
+            self.trunk = trunk
         async with self._gtfs_lock:
             if not await self._exec(os.path.exists, self.zip_path):
                 return False
-            want = stops_key(self.required_stops)
+            want = stops_key(self.required_stops, self.trunk)
             have = await self._exec(self.store.stops_key) if await self._exec(self.store.is_valid) else None
             if have == want:
                 return False
@@ -70,7 +75,8 @@ class TisseoFeeds:
         _LOGGER.info("Indexing Tisséo GTFS for %s stop(s)",
                      "all" if self.required_stops is None else len(self.required_stops))
         stops = None if self.required_stops is None else sorted(self.required_stops)
-        self.index_stats = await self._exec(build_index, self.zip_path, self.db_path, version, stops)
+        self.index_stats = await self._exec(build_index, self.zip_path, self.db_path, version,
+                                            stops, self.trunk)
         from .departures import clear_caches
         clear_caches()
 
@@ -92,7 +98,7 @@ class TisseoFeeds:
             await self._exec(lambda: os.makedirs(self.cache_dir, exist_ok=True))
             meta = await self._exec(self._read_meta)
             valid = await self._exec(self.store.is_valid)
-            if valid and await self._exec(self.store.stops_key) != stops_key(self.required_stops):
+            if valid and await self._exec(self.store.stops_key) != stops_key(self.required_stops, self.trunk):
                 valid = False if not await self._exec(os.path.exists, self.zip_path) else valid
                 if valid:
                     await self._build(meta.get("etag") or meta.get("last_modified") or "")

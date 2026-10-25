@@ -2,7 +2,7 @@
 
 [Français](README.fr.md) · [HACS checklist](docs/HACS_CHECKLIST.md) · MIT licence
 
-Next departures with real-time data when it is published, plus disruptions, journeys with one transfer, a "leave now" helper, VélôToulouse bikes and park-and-ride capacity for the Toulouse network. It comes with an animated dashboard card.
+Next departures with real-time data when it is published, plus disruptions, journeys with up to two transfers, a "leave now" helper, VélôToulouse bikes and park-and-ride capacity for the Toulouse network. It comes with an animated dashboard card.
 
 **No key is needed.** Everything runs on keyless open data:
 
@@ -27,7 +27,7 @@ Then go to *Settings → Devices & services → Add integration → Tisséo* and
 |---|---|
 | **Stop – search** | Type a name (`capitole`, `jeanne d arc`), a GTFS id (`stop_area:SA_1715`) or a code. Then pick the stop area or one platform, and set the options. |
 | **Stop – nearby** | Lists the 10 nearest stops (≤ 5 km) around the HA home location, with their distances and lines. |
-| **Journey** | Origin and destination stops. Direct trips plus trips with **one transfer** (minimum transfer time, default 3 min). |
+| **Journey** | Origin and destination stops. Direct trips plus trips with **one or two transfers** (minimum transfer time, default 3 min). The middle leg of a two-transfer trip uses the trunk lines (metro, tram, Linéo, Téléo). If nothing leaves within 3 h, the first connections of the next service are shown (`later: true`). |
 | **VélôToulouse station** | The 15 nearest stations with live bikes and docks. Unnamed placeholder stations in the feed are hidden. |
 | **Park-and-ride (P+R)** | Tisséo P+R car parks sorted by distance, with their capacity. |
 
@@ -39,12 +39,12 @@ Lines filter · number of departure sensors (1–10, default 3) · poll interval
 ## Entities
 | Entity | State | Main attributes |
 |---|---|---|
-| `sensor.<stop>_departure_1..N` | expected departure (timestamp) | `line`, `destination`, `scheduled`, `expected`, `minutes`, `realtime`, `delay_minutes`, `trip_id`, `realtime_source` (`gtfs_rt` / `tisseo_api` / `timetable`), `live_coverage`, `line_alerts`. On `_1` only: `upcoming` |
+| `sensor.<stop>_departure_1..N` | expected departure (timestamp) | `line`, `destination`, `scheduled`, `expected`, `minutes`, `realtime`, `delay_minutes`, `trip_id`, `realtime_source` (`gtfs_rt` / `tisseo_api` / `timetable`), `live_coverage`, `line_alerts`. On `_1` only: `upcoming`, and `next_service` (the next scheduled departure, up to a week ahead) when nothing leaves within 3 h |
 | `sensor.<stop>_disruptions` | number of active alerts | `alerts`, `headlines` |
 | `sensor.<stop>_leave_in` | minutes until you must leave | `leave_at`, `walking_time`, `buffer`, `next_catchable` |
 | `binary_sensor.<stop>_leave_now` | `on` when it is time to leave | same as above |
 | `binary_sensor.<stop>_timetable_change_tomorrow` | `on` if tomorrow differs by ≥ 10 % from the same weekday of a reference week, or uses a different service calendar | `description`, `tomorrow_departures`, `reference_departures`, `reference_day` |
-| `sensor.<origin>_<dest>_next_connection` | next departure (timestamp) | `arrival`, `duration_min`, `transfers`, `lines`, `legs`, `transfer_at_risk`, `connections` |
+| `sensor.<origin>_<dest>_next_connection` | next departure (timestamp) | `arrival`, `duration_min`, `transfers`, `lines`, `legs`, `transfer_at_risk`, `connections`, `later` |
 | `sensor.velotoulouse_<station>_bikes_available` / `_docks_available` | count | `capacity`, `mechanical`, `electric`, `renting`, `returning`, `last_reported` |
 | `sensor.tisseo_p_r_<name>_capacity` | total spaces | `pmr_spaces`, `bike_spaces`, `ev_spaces`, `live_availability: not_available_as_open_data` |
 | Diagnostic: `_feed_health`, `_last_successful_update`, `_feed_success_rate`, `_real_time_feed_age` | `ok` / `degraded` / `down`, … | per-feed rate, breaker state, last error |
@@ -118,8 +118,11 @@ What the card shows, and where it comes from:
 | 1.0.0 **lean**, 3 stops (25,063 trips) | 4.5 s | 25.7 MB |
 | 1.0.0 lean, Capitole only | 3.9 s | 10.6 MB |
 | 1.0.0 lean, Île du Ramier only | 3.9 s | 7.0 MB |
+| 1.1.1 lean, Ourliac + Capitole, no journey | 4.2 s | 12.3 MB |
+| 1.1.1 lean + trunk lines (any journey configured), Ourliac + Capitole | 5.0 s | 32.4 MB |
+| 1.1.1 lean + trunk lines, test install (5 stop areas, 3 journeys) | — | 34.5 MB |
 
-Adding a stop that is not covered yet rebuilds the index automatically.
+Adding a stop that is not covered yet rebuilds the index automatically. Once a journey is configured, every metro, tram, Linéo and Téléo trip is also kept, so that two-transfer journeys can change between them.
 
 ## Limitations
 - **No live metro.** The keyless GTFS-RT has no metro trip updates. The official API documentation (21/05/2025) says its real time only covers bus and tram, so a key does not change this. Metro times come from the timetable, and metro status comes from the alerts.
@@ -137,6 +140,14 @@ python scripts/set_github_user.py <user>       # set the GitHub owner (placehold
 ```
 
 ## Changelog
+### 1.1.1
+Fixes for suburban stops such as Ourliac (bug report: "no information on the itinerary").
+- **Journeys with two transfers** (e.g. 25 → metro A → metro B to Borderouge). Before, the search allowed one transfer only, and the lean index had no line that called at neither end. So many trips from a suburban stop found nothing. Once a journey is configured, the index now also keeps the trunk lines (metro, tram, Linéo, Téléo).
+- **Next service when the 3 h window is empty.** Some lines have no Sunday or evening service (at Ourliac, only line 87 runs on Sunday). `departure_1` now has a `next_service` attribute, and the card shows "Next departure: tomorrow 06:19 · 25 Colomiers Gare SNCF". The state stays `unknown`, so automations behave as before.
+- **Journey fallback.** If no connection leaves within 3 h, the sensor shows the first connections of the next service and sets `later: true`.
+- **Trip dialog for real-time-only trips.** Trips added by the GTFS-RT feed (not in the timetable, e.g. Téléo) used to return "not found". They now open with the calls the feed publishes.
+- Index schema v5: the index is rebuilt automatically on the first start after the upgrade.
+
 ### 1.1.0
 - **New card design** (v2), integrated into the bundled card as one file: a "next departure" hero with leave-now, departures grouped by direction with "then" times, delay chips with a 90 s threshold, mode-specific badge shapes with automatic AA contrast, a collapsed disruptions banner, notices for missing live data and tomorrow's timetable change, a dark departure board with metro / bus & tram panels and a paged disruptions footer, and a native `<dialog>` trip timeline.
 - New card options: `max_departures`, `group`, `hero`, `hero_line`, `leave_entity`, `alerts`, `timetable_notice`, `show_clock`, `badge_contrast`, `board_theme`. The 1.0 options keep working (`max`, `show_alerts`, filters, `trip_dialog`).
@@ -144,7 +155,7 @@ python scripts/set_github_user.py <user>       # set the GitHub owner (placehold
 - The card follows Home Assistant's 12 h / 24 h time setting.
 
 ### 1.0.0
-- New entry types: **nearby stops**, **journeys with one transfer**, **VélôToulouse stations** and **P+R**.
+- New entry types: **nearby stops**, **journeys with one transfer** (two since 1.1.1), **VélôToulouse stations** and **P+R**.
 - New stop entities: **leave now / leave in** and **timetable change tomorrow**.
 - New `tisseo_disruption` / `tisseo_delay` events, with 3 blueprints.
 - **Optional user API key** (Tisséo API v2 `stops_schedules`), with validation, a repair issue and reauth.

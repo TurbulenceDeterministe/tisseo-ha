@@ -51,7 +51,7 @@
       },
       "journey_pick": {
         "title": "Trajet",
-        "description": "Les trajets directs et avec une correspondance sont calculés à partir des horaires (et ajustés avec le temps réel quand il est disponible).",
+        "description": "Les trajets directs et avec une ou deux correspondances sont calculés à partir des horaires (et ajustés avec le temps réel quand il est disponible).",
         "data": {
           "origin": "Départ",
           "destination": "Arrivée",

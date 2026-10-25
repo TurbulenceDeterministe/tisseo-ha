@@ -19,9 +19,11 @@ def trip_stops(store: GtfsStore, rt: RealtimeSnapshot | None, trip_id: str,
     """
     now = (now or datetime.now(TZ)).astimezone(TZ)
     calls = store.trip_calls(trip_id)
-    if not calls:
-        return None
     rt = rt or RealtimeSnapshot.empty()
+    if not calls:
+        # Trips added by the real-time feed (ADDED / not in the timetable): list the
+        # calls the feed itself publishes.
+        return _rt_only(store, rt, trip_id, stop_id, now)
     origin = None
     if scheduled is not None and stop_id:
         ids = set(store.child_stop_ids(stop_id)) | {stop_id}
@@ -67,5 +69,39 @@ def trip_stops(store: GtfsStore, rt: RealtimeSnapshot | None, trip_id: str,
         "color": f"#{r.color}" if r and r.color else "",
         "text_color": f"#{r.text_color}" if r and r.text_color else "",
         "realtime": trip is not None, "canceled": bool(trip and trip.relationship == 3),
+        "next_index": nxt, "stops": out,
+    }
+
+
+def _rt_only(store: GtfsStore, rt: RealtimeSnapshot, trip_id: str, stop_id: str | None,
+             now: datetime) -> dict | None:
+    trip = rt.trips.get(trip_id)
+    ups = [u for u in (trip.updates if trip else []) if u.time]
+    if not ups:
+        return None
+    names = store.stop_names({u.stop_id for u in ups})
+    stops_ = {u.stop_id: store.get_stop(u.stop_id) for u in ups}
+    pinned = set(store.child_stop_ids(stop_id)) | {stop_id} if stop_id else set()
+    out = []
+    for u in sorted(ups, key=lambda x: (x.seq if x.seq is not None else 0, x.time)):
+        st = stops_.get(u.stop_id)
+        t = datetime.fromtimestamp(u.time, TZ)
+        area = (st.parent or st.stop_id) if st else u.stop_id
+        out.append({
+            "stop_id": u.stop_id, "stop_area": area, "name": names.get(u.stop_id, u.stop_id),
+            "seq": u.seq, "scheduled": None, "scheduled_arrival": None,
+            "expected": t.isoformat(), "delay": u.delay, "realtime": True,
+            "skipped": u.skipped, "past": t < now - timedelta(seconds=30),
+            "is_selected": bool(pinned and (u.stop_id in pinned or area in pinned)),
+            "lat": st.lat if st else None, "lon": st.lon if st else None,
+        })
+    r = store.routes().get(trip.route_id)
+    nxt = next((i for i, x in enumerate(out) if not x["past"]), None)
+    return {
+        "trip_id": trip_id, "headsign": out[-1]["name"], "route_id": trip.route_id,
+        "line": r.short_name if r else trip.route_id,
+        "color": f"#{r.color}" if r and r.color else "",
+        "text_color": f"#{r.text_color}" if r and r.text_color else "",
+        "realtime": True, "canceled": trip.relationship == 3, "added": True,
         "next_index": nxt, "stops": out,
     }

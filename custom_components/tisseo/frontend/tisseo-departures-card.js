@@ -19,7 +19,7 @@
  *   show_clock: false · badge_contrast: auto|brand · board_theme: dark|auto
  */
 (() => {
-const TDC_VERSION = "1.1.0";
+const TDC_VERSION = "1.1.1";
 const STYLES = `/* ==========================================================================
    tisseo-card.css — design system v2 for custom:tisseo-departures-card
    Drop-in: paste into the card's static styles (Shadow DOM). The root element
@@ -439,6 +439,10 @@ div.tc-row__hit, div.tc-hero { cursor: default; }
 .tc-dlg__body .tc-empty { gap: 10px; }
 .tc-dlg__body .tc-skel { height: 14px; }
 button.tc-pager { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+
+/* 1.1.1: next scheduled departure when the 3 h window is empty */
+.tc-next { flex-direction: column; gap: 6px; }
+.tc-next__line { display: inline-flex; align-items: center; gap: 6px; color: var(--tc-text); font-weight: 500; }
 `;
 
 /* ───────── colour & contrast (from the design's tisseo-ui.js) ───────── */
@@ -499,7 +503,7 @@ const STRINGS = {
     late: (m) => `+${m} min`, early: (m) => `−${m} min`,
     lateLong: (m) => `en retard de ${m} min`, earlyLong: (m) => `en avance de ${m} min`,
     leaveIn: "Partez dans", leaveNow: "Partez maintenant", missed: "Trop juste",
-    noDep: "Aucun départ dans les 3 h", noMatch: "Aucun départ pour ce filtre", showAll: "Tout afficher",
+    noDep: "Aucun départ dans les 3 h", nextService: "Prochain départ :", today: "aujourd'hui", tomorrow: "demain", noMatch: "Aucun départ pour ce filtre", showAll: "Tout afficher",
     feedDown: "Temps réel indisponible", feedDownSub: "Horaires théoriques affichés",
     stale: (m) => `Données d'il y a ${m} min`, entityMissing: "Arrêt introuvable",
     ttChange: "Horaires modifiés demain",
@@ -520,7 +524,7 @@ const STRINGS = {
     late: (m) => `+${m} min`, early: (m) => `−${m} min`,
     lateLong: (m) => `${m} min late`, earlyLong: (m) => `${m} min early`,
     leaveIn: "Leave in", leaveNow: "Leave now", missed: "Too tight",
-    noDep: "No departures in the next 3 h", noMatch: "No departures match this filter", showAll: "Show all",
+    noDep: "No departures in the next 3 h", nextService: "Next departure:", today: "today", tomorrow: "tomorrow", noMatch: "No departures match this filter", showAll: "Show all",
     feedDown: "Live data unavailable", feedDownSub: "Showing scheduled times",
     stale: (m) => `Data from ${m} min ago`, entityMissing: "Stop not found",
     ttChange: "Timetable changes tomorrow",
@@ -545,6 +549,13 @@ const DELAY_THRESHOLD_S = 90; // below this, GTFS-RT jitter: no chip
 // HA's own time format setting (12 h / 24 h / language / system) is applied by the card on each render.
 const TIMEFMT = { locale: undefined, hour12: undefined };
 const hhmm = (ms) => new Date(ms).toLocaleTimeString(TIMEFMT.locale, { hour: "2-digit", minute: "2-digit", hour12: TIMEFMT.hour12 });
+// "today 06:19" / "tomorrow 06:19" / "Monday 06:19" (local calendar days).
+function dayTime(ms, nowMs, lang) {
+  const s = tr(lang), when = new Date(ms), n = new Date(nowMs);
+  const days = Math.round((new Date(when.getFullYear(), when.getMonth(), when.getDate()) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000);
+  const day = days === 0 ? s.today : days === 1 ? s.tomorrow : when.toLocaleDateString(TIMEFMT.locale || lang, { weekday: "long" });
+  return `${day} ${hhmm(ms)}`;
+}
 function formatCountdown(expectedMs, nowMs, lang) {
   const s = tr(lang), diff = Math.floor((expectedMs - nowMs) / 1000), min = Math.floor(diff / 60);
   if (diff < 60) return { kind: "due", word: s.due, text: s.due, minutes: 0 };
@@ -891,7 +902,7 @@ class TisseoDeparturesCard extends HTMLElement {
     const heroKey = hero ? `${hero.route_id || hero.line}|${hero.destination}` : null;
     const groups = groupDepartures(hero ? deps.filter((x) => x !== hero) : deps, c.group !== false)
       .filter((g) => !(c.group !== false && g.key === heroKey && g.next.ms > hero.ms)).slice(0, c.max_departures);
-    if (!groups.length && !hero) this._renderEmpty(all.length > 0);
+    if (!groups.length && !hero) this._renderEmpty(all.length > 0, st);
     else this._emptyEl.hidden = true;
 
     reconcile(this._list, groups, {
@@ -1195,13 +1206,21 @@ class TisseoDeparturesCard extends HTMLElement {
     this._alertsSlot.querySelector(".tc-alert").addEventListener("click", () => { this._alertsOpen = !open; this._renderAlerts(list); });
   }
 
-  _renderEmpty(hasAny) {
+  // No departure in the window: say when the next one is (e.g. no Sunday service on the line).
+  _nextServiceHTML(st, now) {
+    const n = st?.attributes?.next_service, ms = n && Date.parse(n.scheduled);
+    if (!n || !(ms > now)) return "";
+    return `<p class="tc-empty__text tc-next"><span>${esc(this._s.nextService)} ${esc(dayTime(ms, now, this._lang))}</span>
+      <span class="tc-next__line">${badgeHTML(n, "", this._config.badge_contrast)}<span>${esc(n.destination || "")}</span></span></p>`;
+  }
+
+  _renderEmpty(hasAny, st) {
     const s = this._s, el = this._emptyEl;
     const filtered = hasAny && (this._sel.lines.size || this._sel.dests.size) && this._config.show_filters;
     el.hidden = false;
     el.innerHTML = filtered
       ? `<div class="tc-empty__icon">${I.filter}</div><p class="tc-empty__title">${esc(s.noMatch)}</p><button class="tc-textbtn" type="button">${esc(s.showAll)}</button>`
-      : `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(hasAny ? s.noMatch : s.noDep)}</p>`;
+      : `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(hasAny ? s.noMatch : s.noDep)}</p>${hasAny ? "" : this._nextServiceHTML(st, Date.now())}`;
   }
 
   _renderError(s) {
@@ -1224,7 +1243,7 @@ class TisseoDeparturesCard extends HTMLElement {
     }
     const groups = groupDepartures(deps, c.group !== false).slice(0, c.max_departures);
     this._emptyEl.hidden = groups.length > 0;
-    if (!groups.length) this._emptyEl.innerHTML = `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(s.noDep)}</p>`;
+    if (!groups.length) this._emptyEl.innerHTML = `<div class="tc-empty__icon">${I.clock}</div><p class="tc-empty__title">${esc(s.noDep)}</p>${this._nextServiceHTML(st, now)}`;
     const isMetro = (g) => g.next.mode === "metro";
     const panels = { metro: groups.filter(isMetro), other: groups.filter((g) => !isMetro(g)) };
     const both = panels.metro.length > 0 && panels.other.length > 0;

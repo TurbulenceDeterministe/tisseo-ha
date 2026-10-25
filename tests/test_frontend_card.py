@@ -77,3 +77,11 @@ def test_card_reads_real_companion_attributes():
     rt = (COMP / "data" / "realtime.py").read_text(encoding="utf-8")
     for key in ("header", "description", "url", "effect", "lines", "network_wide"):
         assert f'"{key}"' in rt, key
+
+
+def test_card_shows_next_service_when_window_empty():
+    """1.1.1: the empty state names the next scheduled departure (published by the sensor)."""
+    src = CARD.read_text(encoding="utf-8")
+    sensor = (COMP / "sensor.py").read_text(encoding="utf-8")
+    assert "attributes?.next_service" in src and '"next_service"' in sensor
+    assert 'nextService: "Prochain départ :"' in src and 'nextService: "Next departure:"' in src

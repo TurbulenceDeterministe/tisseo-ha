@@ -19,13 +19,16 @@ from datetime import date, datetime, timedelta
 
 from .const import TZ
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # v4: "lean" index. Stops, routes, trips, calendars and a (stop, route) map are kept
 # for the whole network (search, nearby stops, line lists), but stop_times are only
 # kept for trips that call at one of the configured stop areas. Those trips are kept
 # whole (every call, with arrival times and board/alight flags) so journeys and the
 # trip dialog work.
+# v5: when a journey is configured, the trips of the trunk lines (metro, tram, Linéo,
+# Téléo) are also kept whole, so journeys can change twice (bus -> metro A ->
+# metro B) through lines that call at neither end of the journey.
 SCHEMA = """
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE stops (
@@ -47,11 +50,20 @@ CREATE TABLE stop_times (
 POST_INDEXES = "CREATE INDEX st_stop_dep ON stop_times (stop_idx, dep);"
 
 
-def stops_key(stop_ids) -> str:
+TRUNK_SUFFIX = "|trunk"
+
+
+def stops_key(stop_ids, trunk: bool = False) -> str:
     """Canonical key of a set of configured stops ("*" = whole network)."""
     if stop_ids is None:
         return "*"
-    return ",".join(sorted(set(stop_ids)))
+    return ",".join(sorted(set(stop_ids))) + (TRUNK_SUFFIX if trunk else "")
+
+
+def is_trunk(route_type: int, short_name: str) -> bool:
+    """Metro, tram, cable car, train... and the Linéo buses (L1, L2...)."""
+    name = (short_name or "").strip().upper()
+    return route_type != 3 or (len(name) > 1 and name[0] == "L" and name[1:].isdigit())
 
 
 def normalize(text: str) -> str:
@@ -96,11 +108,12 @@ class RouteInfo:
 
 
 def build_index(zip_path: str, db_path: str, feed_version: str = "",
-                stop_ids=None) -> dict:
+                stop_ids=None, trunk: bool = False) -> dict:
     """(Re)build the SQLite index from a GTFS zip, atomically.
 
     ``stop_ids``: configured stop ids (areas or points). Only trips calling in their
-    stop areas get stop_times. ``None`` indexes the whole network. Returns stats.
+    stop areas get stop_times. ``None`` indexes the whole network. ``trunk`` also
+    keeps every trip of the trunk lines (for journeys with two transfers). Returns stats.
     """
     t0 = datetime.now()
     tmp = db_path + ".tmp"
@@ -133,9 +146,12 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "",
                 keep = {r[0] for r in _stop_rows if area[r[0]] in areas or r[1] in areas}
 
             route_idx: dict[str, int] = {}
+            trunk_routes: set[int] = set()
             rows = []
             for i, r in enumerate(_rows(zf, "routes.txt")):
                 route_idx[r["route_id"]] = i
+                if trunk and is_trunk(int(r.get("route_type") or 3), r.get("route_short_name") or ""):
+                    trunk_routes.add(i)
                 rows.append((i, r["route_id"], r.get("route_short_name") or "",
                              r.get("route_long_name") or "", int(r.get("route_type") or 3),
                              r.get("route_color") or "", r.get("route_text_color") or ""))
@@ -203,7 +219,7 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "",
                 ti = trip[0][2]
                 rt = trip_route.get(ti, -1)
                 rows_ = []
-                touches = keep is None
+                touches = keep is None or rt in trunk_routes
                 for n, (st, dep, _ti, seq, nopick, arr, nodrop) in enumerate(trip):
                     board = int(n < end and not nopick)
                     if board:
@@ -246,7 +262,7 @@ def build_index(zip_path: str, db_path: str, feed_version: str = "",
 
         con.executemany("INSERT INTO meta VALUES (?,?)", [
             ("schema", str(SCHEMA_VERSION)), ("feed_version", feed_version),
-            ("built", datetime.now(TZ).isoformat()), ("stops_key", stops_key(stop_ids))])
+            ("built", datetime.now(TZ).isoformat()), ("stops_key", stops_key(stop_ids, trunk))])
         con.commit()
         con.execute("VACUUM")
     finally:
@@ -366,6 +382,43 @@ class GtfsStore:
             f"WHERE s.stop_id IN ({ph}) AND st.board=1 AND st.dep BETWEEN ? AND ? ORDER BY st.dep")
         with self._con() as con:
             return [dict(r) for r in con.execute(sql, (d, *stop_ids, from_secs, to_secs))]
+
+    def next_scheduled(self, stop_ids: list[str], after: datetime,
+                       route_ids: set[str] | None = None, days: int = 7) -> dict | None:
+        """First boardable scheduled departure at the stops strictly after ``after``.
+
+        Looks up to ``days`` service days ahead (lines with no evening, weekend or
+        holiday service). Returns stop_id, dep (aware datetime), trip_id, headsign,
+        route_id, or None."""
+        from .departures import service_day_origin  # local import: avoid a cycle
+        after = after.astimezone(TZ)
+        ph = ",".join("?" * len(stop_ids))
+        rf, rargs = "", []
+        if route_ids:
+            rf = f" AND r.route_id IN ({','.join('?' * len(route_ids))})"
+            rargs = sorted(route_ids)
+        sql = ("SELECT s.stop_id, st.dep, t.trip_id, t.headsign, r.route_id "
+               "FROM stops s JOIN stop_times st ON st.stop_idx=s.idx "
+               "JOIN trips t ON t.idx=st.trip_idx "
+               "JOIN service_dates sd ON sd.service_idx=t.service_idx AND sd.d=? "
+               "JOIN routes r ON r.idx=t.route_idx "
+               f"WHERE s.stop_id IN ({ph}) AND st.board=1 AND st.dep > ?{rf} "
+               "ORDER BY st.dep LIMIT 1")
+        best = None
+        with self._con() as con:
+            for n in range(-1, days + 1):
+                day = after.date() + timedelta(days=n)
+                origin = service_day_origin(day)
+                if best is not None and origin > best["dep"]:
+                    break
+                lo = max(-1, int((after - origin).total_seconds()))
+                r = con.execute(sql, (int(day.strftime("%Y%m%d")), *stop_ids, lo, *rargs)).fetchone()
+                if r:
+                    dep = origin + timedelta(seconds=r["dep"])
+                    if best is None or dep < best["dep"]:
+                        best = {"stop_id": r["stop_id"], "dep": dep, "trip_id": r["trip_id"],
+                                "headsign": r["headsign"], "route_id": r["route_id"]}
+        return best
 
     def stops_key(self) -> str:
         try:

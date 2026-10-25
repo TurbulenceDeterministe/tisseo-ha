@@ -2,7 +2,7 @@
 
 [English](README.md) · [Checklist HACS](docs/HACS_CHECKLIST.md) · Licence MIT
 
-Pour le réseau toulousain : prochains passages (temps réel quand il est publié), perturbations, itinéraires avec une correspondance, aide « partir maintenant », vélos VélôToulouse et capacité des parcs relais. Une carte de tableau de bord animée est fournie.
+Pour le réseau toulousain : prochains passages (temps réel quand il est publié), perturbations, itinéraires avec une ou deux correspondances, aide « partir maintenant », vélos VélôToulouse et capacité des parcs relais. Une carte de tableau de bord animée est fournie.
 
 **Aucune clé n'est nécessaire.** Tout repose sur des données ouvertes sans clé :
 
@@ -27,11 +27,11 @@ Allez ensuite dans *Paramètres → Appareils et services → Ajouter une intég
 |---|---|
 | **Arrêt – recherche** | Saisissez un nom (`capitole`, `jeanne d arc`), un identifiant GTFS ou un code, puis choisissez la zone d'arrêt ou un quai. |
 | **Arrêt – à proximité** | Les 10 arrêts les plus proches (≤ 5 km) du domicile HA, avec la distance et les lignes. |
-| **Itinéraire** | Départ et arrivée. Trajets directs ou avec **une correspondance** (temps minimal de correspondance, 3 min par défaut). |
+| **Itinéraire** | Départ et arrivée. Trajets directs ou avec **une ou deux correspondances** (temps minimal de correspondance, 3 min par défaut). La correspondance du milieu se fait sur les lignes structurantes (métro, tram, Linéo, Téléo). Si rien ne part dans les 3 h, les premiers trajets du service suivant sont affichés (`later: true`). |
 | **Station VélôToulouse** | Les 15 stations les plus proches, avec les vélos et places libres. Les stations fantômes sans nom du flux sont masquées. |
 | **Parc relais (P+R)** | Les parcs relais Tisséo triés par distance, avec leur capacité. |
 
-Le premier ajout télécharge le GTFS (~14 Mo) et construit un index SQLite **allégé**, qui ne garde que les courses desservant vos arrêts.
+Le premier ajout télécharge le GTFS (~14 Mo) et construit un index SQLite **allégé**, qui ne garde que les courses desservant vos arrêts (plus les lignes structurantes dès qu'un itinéraire est configuré).
 
 ### Options d'un arrêt (*Configurer*)
 Filtre de lignes · nombre de capteurs (1–10, 3 par défaut) · intervalle (≥ 30 s) · alertes réseau · GTFS-RT · **temps de marche** et **marge** (2 min par défaut) · **seuil d'événement de retard** (5 min, 0 = désactivé) · **clé API Tisséo** (facultative ; laisser vide pour la retirer).
@@ -39,12 +39,12 @@ Filtre de lignes · nombre de capteurs (1–10, 3 par défaut) · intervalle (�
 ## Entités
 | Entité | État | Attributs principaux |
 |---|---|---|
-| `sensor.<arrêt>_departure_1..N` | heure de départ prévue | `line`, `destination`, `scheduled`, `expected`, `minutes`, `realtime`, `delay_minutes`, `trip_id`, `realtime_source` (`gtfs_rt` / `tisseo_api` / `timetable`). `upcoming` sur `_1` |
+| `sensor.<arrêt>_departure_1..N` | heure de départ prévue | `line`, `destination`, `scheduled`, `expected`, `minutes`, `realtime`, `delay_minutes`, `trip_id`, `realtime_source` (`gtfs_rt` / `tisseo_api` / `timetable`). `upcoming` sur `_1`, ainsi que `next_service` (prochain départ prévu, jusqu'à une semaine) quand rien ne part dans les 3 h |
 | `sensor.<arrêt>_disruptions` | nombre d'alertes | `alerts`, `headlines` |
 | `sensor.<arrêt>_leave_in` | minutes avant de partir | `leave_at`, `walking_time`, `buffer`, `next_catchable` |
 | `binary_sensor.<arrêt>_leave_now` | `on` quand il faut partir | idem |
 | `binary_sensor.<arrêt>_timetable_change_tomorrow` | `on` si demain diffère d'au moins 10 % du même jour d'une semaine de référence, ou change de calendrier | `description`, `tomorrow_departures`, `reference_departures` |
-| `sensor.<départ>_<arrivée>_next_connection` | prochain départ | `arrival`, `duration_min`, `transfers`, `lines`, `legs`, `transfer_at_risk` |
+| `sensor.<départ>_<arrivée>_next_connection` | prochain départ | `arrival`, `duration_min`, `transfers`, `lines`, `legs`, `transfer_at_risk`, `later` |
 | `sensor.velotoulouse_<station>_bikes_available` / `_docks_available` | nombre | `capacity`, `mechanical`, `electric`, `last_reported` |
 | `sensor.tisseo_p_r_<nom>_capacity` | places | `pmr_spaces`, `bike_spaces`, `live_availability: not_available_as_open_data` |
 | Diagnostic : santé du flux, dernière mise à jour réussie, taux de succès, âge du flux temps réel | `ok` / `degraded` / `down` … | état du disjoncteur, dernière erreur |

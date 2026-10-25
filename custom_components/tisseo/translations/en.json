@@ -51,7 +51,7 @@
       },
       "journey_pick": {
         "title": "Journey",
-        "description": "Direct trips and connections with one transfer are searched in the timetable (and adjusted with live data when available).",
+        "description": "Direct trips and connections with up to two transfers are searched in the timetable (and adjusted with live data when available).",
         "data": {
           "origin": "From",
           "destination": "To",
