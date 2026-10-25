@@ -200,7 +200,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits and data licence
 - Timetables and real-time data © **Tisséo**, under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/), via [transport.data.gouv.fr](https://transport.data.gouv.fr/) and [data.toulouse-metropole.fr](https://data.toulouse-metropole.fr/).
-- VélôToulouse data © JCDecaux (GBFS, JCDecaux open licence). P+R data © Toulouse Métropole (ODbL).
+- VélôToulouse data © JCDecaux (GBFS, JCDecaux open licence). P+R data © Toulouse Métropole ([Licence Ouverte v2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/)). See [NOTICE.md](NOTICE.md).
 - Code under the [MIT licence](LICENSE).
 
 ## Disclaimer

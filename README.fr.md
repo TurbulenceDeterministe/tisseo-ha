@@ -200,7 +200,7 @@ Voir [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Crédits et licence des données
 - Horaires et temps réel © **Tisséo**, sous [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/), via [transport.data.gouv.fr](https://transport.data.gouv.fr/) et [data.toulouse-metropole.fr](https://data.toulouse-metropole.fr/).
-- Données VélôToulouse © JCDecaux (GBFS, licence ouverte JCDecaux). Données P+R © Toulouse Métropole (ODbL).
+- Données VélôToulouse © JCDecaux (GBFS, licence ouverte JCDecaux). Données P+R © Toulouse Métropole ([Licence Ouverte v2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/)). Voir [NOTICE.md](NOTICE.md).
 - Code sous [licence MIT](LICENSE).
 
 ## Avertissement
